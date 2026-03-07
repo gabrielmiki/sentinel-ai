@@ -1,0 +1,307 @@
+services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./monitoring/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./monitoring/nginx/conf.d:/etc/nginx/conf.d:ro
+    networks:
+      - sentinel-net
+    depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://sentinel@postgres:5432/sentinelai
+      - REDIS_URL=redis://:sentinel_redis_pass@redis:6379/0
+      - PROMETHEUS_URL=http://prometheus:9090
+    secrets:
+      - db_password
+      - redis_password
+      - openai_api_key
+      - anthropic_api_key
+      - jwt_secret_key
+    volumes:
+      - type: bind
+        source: ./api
+        target: /app/api
+        read_only: false
+      - type: bind
+        source: ./ingestion
+        target: /app/ingestion
+        read_only: false
+    networks:
+      - sentinel-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vectordb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        order: start-first
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  celery-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    command: celery -A api.tasks.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://sentinel@postgres:5432/sentinelai
+      - REDIS_URL=redis://:sentinel_redis_pass@redis:6379/0
+      - CELERY_BROKER_URL=redis://:sentinel_redis_pass@redis:6379/1
+      - CELERY_RESULT_BACKEND=redis://:sentinel_redis_pass@redis:6379/2
+    secrets:
+      - db_password
+      - redis_password
+      - openai_api_key
+      - anthropic_api_key
+    volumes:
+      - type: bind
+        source: ./api
+        target: /app/api
+        read_only: false
+      - type: bind
+        source: ./ingestion
+        target: /app/ingestion
+        read_only: false
+    networks:
+      - sentinel-net
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      vectordb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A api.tasks.celery_app inspect ping -d celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=sentinel
+      - POSTGRES_DB=sentinelai
+      - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+    secrets:
+      - db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./monitoring/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - sentinel-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinelai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+  vectordb:
+    image: pgvector/pgvector:pg16
+    environment:
+      - POSTGRES_USER=vectoradmin
+      - POSTGRES_DB=vectordb
+      - POSTGRES_PASSWORD_FILE=/run/secrets/vectordb_password
+    secrets:
+      - vectordb_password
+    volumes:
+      - vectordb_data:/var/lib/postgresql/data
+      - ./monitoring/postgres/init-vectordb.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - sentinel-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vectoradmin -d vectordb"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+  redis:
+    image: redis:7-alpine
+    command: >
+      sh -c "redis-server
+      --requirepass $$(cat /run/secrets/redis_password)
+      --appendonly yes
+      --appendfsync everysec
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru"
+    secrets:
+      - redis_password
+    volumes:
+      - redis_data:/data
+    networks:
+      - sentinel-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "$$(cat /run/secrets/redis_password)", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/usr/share/prometheus/console_libraries'
+      - '--web.console.templates=/usr/share/prometheus/consoles'
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - sentinel-net
+    ports:
+      - "9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD_FILE=/run/secrets/grafana_admin_password
+      - GF_INSTALL_PLUGINS=redis-datasource
+    secrets:
+      - grafana_admin_password
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    networks:
+      - sentinel-net
+    ports:
+      - "3000:3000"
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      replicas: 1
+      placement:
+        constraints:
+          - node.role == manager
+      restart_policy:
+        condition: on-failure
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  vectordb_password:
+    file: ./secrets/vectordb_password.txt
+  redis_password:
+    file: ./secrets/redis_password.txt
+  openai_api_key:
+    file: ./secrets/openai_api_key.txt
+  anthropic_api_key:
+    file: ./secrets/anthropic_api_key.txt
+  jwt_secret_key:
+    file: ./secrets/jwt_secret_key.txt
+  grafana_admin_password:
+    file: ./secrets/grafana_admin_password.txt
+
+volumes:
+  postgres_data:
+    driver: local
+  vectordb_data:
+    driver: local
+  redis_data:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  sentinel-net:
+    driver: overlay
+    attachable: true
