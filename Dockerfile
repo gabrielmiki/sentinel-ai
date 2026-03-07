@@ -3,7 +3,7 @@ FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
 WORKDIR /app
 
 # Copy dependency files
-COPY pyproject.toml ./
+COPY pyproject.toml README.md uv.lock ./
 
 # Install dependencies using UV
 RUN uv sync --no-dev --frozen
@@ -25,6 +25,10 @@ COPY --from=builder /app/.venv /app/.venv
 COPY api/ ./api/
 COPY ingestion/ ./ingestion/
 
+# Copy and setup entrypoint script
+COPY api/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
+
 # Create non-root user
 RUN useradd -m -u 1000 sentinel && \
     chown -R sentinel:sentinel /app && \
@@ -44,4 +48,5 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 EXPOSE 8000
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

@@ -1,6 +1,8 @@
+version: "3.8"
+
 services:
   nginx:
-    image: nginx:alpine
+    image: nginx:1.25-alpine
     ports:
       - "80:80"
       - "443:443"
@@ -10,8 +12,12 @@ services:
     networks:
       - sentinel-net
     depends_on:
-      backend:
-        condition: service_healthy
+      - backend
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       placement:
@@ -23,16 +29,17 @@ services:
         max_attempts: 3
 
   backend:
+    image: sentinel-ai-backend:latest
     build:
       context: .
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=postgresql+asyncpg://sentinel@postgres:5432/sentinelai
-      - REDIS_URL=redis://:sentinel_redis_pass@redis:6379/0
       - PROMETHEUS_URL=http://prometheus:9090
+      # DATABASE_URL, VECTORDB_URL, and Redis URLs are built from secrets in entrypoint script
     secrets:
       - db_password
       - redis_password
+      - vectordb_password
       - openai_api_key
       - anthropic_api_key
       - jwt_secret_key
@@ -48,18 +55,20 @@ services:
     networks:
       - sentinel-net
     depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      vectordb:
-        condition: service_healthy
+      - postgres
+      - redis
+      - vectordb
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health', timeout=5)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 3
       update_config:
@@ -79,18 +88,16 @@ services:
           memory: 512M
 
   celery-worker:
+    image: sentinel-ai-celery-worker:latest
     build:
       context: .
       dockerfile: Dockerfile.celery
     command: celery -A api.tasks.celery_app worker --loglevel=info --concurrency=2
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://sentinel@postgres:5432/sentinelai
-      - REDIS_URL=redis://:sentinel_redis_pass@redis:6379/0
-      - CELERY_BROKER_URL=redis://:sentinel_redis_pass@redis:6379/1
-      - CELERY_RESULT_BACKEND=redis://:sentinel_redis_pass@redis:6379/2
+    # DATABASE_URL, VECTORDB_URL, and Redis URLs are built from secrets in entrypoint script
     secrets:
       - db_password
       - redis_password
+      - vectordb_password
       - openai_api_key
       - anthropic_api_key
     volumes:
@@ -105,18 +112,20 @@ services:
     networks:
       - sentinel-net
     depends_on:
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      vectordb:
-        condition: service_healthy
+      - redis
+      - postgres
+      - vectordb
     healthcheck:
-      test: ["CMD-SHELL", "celery -A api.tasks.celery_app inspect ping -d celery@$$HOSTNAME"]
+      test: ["CMD-SHELL", "pgrep -f 'celery.*worker' || exit 1"]
       interval: 30s
-      timeout: 10s
+      timeout: 5s
       retries: 3
       start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 2
       restart_policy:
@@ -125,14 +134,14 @@ services:
         max_attempts: 3
       resources:
         limits:
-          cpus: '2'
-          memory: 2G
-        reservations:
           cpus: '1'
           memory: 1G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.2-alpine
     environment:
       - POSTGRES_USER=sentinel
       - POSTGRES_DB=sentinelai
@@ -150,6 +159,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       placement:
@@ -177,6 +191,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       placement:
@@ -186,7 +205,7 @@ services:
         condition: on-failure
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.2-alpine
     command: >
       sh -c "redis-server
       --requirepass $$(cat /run/secrets/redis_password)
@@ -201,11 +220,16 @@ services:
     networks:
       - sentinel-net
     healthcheck:
-      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "$$(cat /run/secrets/redis_password)", "ping"]
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$(cat /run/secrets/redis_password)\" ping"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       placement:
@@ -215,7 +239,7 @@ services:
         condition: on-failure
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.51.0
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
@@ -226,13 +250,16 @@ services:
       - prometheus_data:/prometheus
     networks:
       - sentinel-net
-    ports:
-      - "9090:9090"
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
       interval: 30s
       timeout: 10s
       retries: 3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       placement:
@@ -242,7 +269,7 @@ services:
         condition: on-failure
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:10.4.1
     environment:
       - GF_SECURITY_ADMIN_PASSWORD_FILE=/run/secrets/grafana_admin_password
       - GF_INSTALL_PLUGINS=redis-datasource
@@ -254,17 +281,19 @@ services:
       - ./monitoring/grafana/datasources:/etc/grafana/provisioning/datasources:ro
     networks:
       - sentinel-net
-    ports:
-      - "3000:3000"
     depends_on:
-      prometheus:
-        condition: service_healthy
+      - prometheus
     healthcheck:
       test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
     deploy:
       replicas: 1
       placement:

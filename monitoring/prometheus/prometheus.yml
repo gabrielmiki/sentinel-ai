@@ -1,0 +1,40 @@
+# Prometheus Configuration for SentinelAI
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'sentinel-ai'
+    environment: 'production'
+
+# Alertmanager configuration (placeholder for future use)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+
+# Load rules once and periodically evaluate them
+rule_files:
+  # - "alerts/*.yml"
+
+# Scrape configurations
+scrape_configs:
+  # Prometheus self-monitoring
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # SentinelAI backend API metrics
+  - job_name: 'sentinel-backend'
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['backend:8000']
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: instance
+        replacement: 'backend'
+
+  # Docker daemon metrics (if enabled)
+  - job_name: 'docker'
+    static_configs:
+      - targets: []
