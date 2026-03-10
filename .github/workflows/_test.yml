@@ -1,0 +1,95 @@
+name: Test & Coverage
+
+on:
+  workflow_call:
+
+jobs:
+  pytest:
+    name: pytest with Coverage (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    services:
+      postgres:
+        image: postgres:16.2-alpine
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      vectordb:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: vectoruser
+          POSTGRES_PASSWORD: vectorpass
+          POSTGRES_DB: vectordb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5433:5432
+
+      redis:
+        image: redis:7.2-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up UV
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.2"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Run pytest with coverage
+        env:
+          DATABASE_URL: postgresql+asyncpg://testuser:testpass@localhost:5432/testdb
+          VECTORDB_URL: postgresql+asyncpg://vectoruser:vectorpass@localhost:5433/vectordb
+          REDIS_URL: redis://localhost:6379/0
+          CELERY_BROKER_URL: redis://localhost:6379/1
+          CELERY_RESULT_BACKEND: redis://localhost:6379/2
+          JWT_SECRET_KEY: test-secret-key-for-ci
+          OPENAI_API_KEY: sk-test-key
+        run: uv run pytest
+
+      - name: Upload coverage HTML report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-html-py${{ matrix.python-version }}
+          path: htmlcov/
+          retention-days: 14
+
+      - name: Upload coverage XML to Codecov
+        uses: codecov/codecov-action@v4
+        if: always() && matrix.python-version == '3.11'
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-sentinel-ai
+          fail_ci_if_error: false

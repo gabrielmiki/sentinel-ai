@@ -1,0 +1,49 @@
+name: Dependency Audit
+
+on:
+  workflow_call:
+
+jobs:
+  pip-audit:
+    name: pip-audit Security Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up UV
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.2"
+          python-version: "3.11"
+
+      - name: Export dependencies
+        run: uv export --frozen --output-file requirements.audit.txt
+
+      - name: Run pip-audit (human-readable)
+        run: |
+          uvx pip-audit \
+            --requirement requirements.audit.txt \
+            --vulnerability-service osv \
+            --desc \
+            --output audit-report.txt
+        continue-on-error: true
+
+      - name: Run pip-audit (JSON)
+        run: |
+          uvx pip-audit \
+            --requirement requirements.audit.txt \
+            --vulnerability-service osv \
+            --format json \
+            --output audit-report.json
+
+      - name: Upload audit reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-audit-reports
+          path: |
+            audit-report.txt
+            audit-report.json
+            requirements.audit.txt
+          retention-days: 14

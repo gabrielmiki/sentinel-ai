@@ -1,0 +1,63 @@
+name: SAST Security Scan
+
+on:
+  workflow_call:
+
+jobs:
+  bandit:
+    name: Bandit Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up UV
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.5.2"
+          python-version: "3.11"
+
+      - name: Run Bandit
+        run: |
+          uvx bandit -r api/ ingestion/ \
+            --severity-level medium \
+            --confidence-level medium \
+            -f json -o bandit-report.json
+        continue-on-error: true
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-security-report
+          path: bandit-report.json
+          retention-days: 30
+
+  semgrep:
+    name: Semgrep Security Scan
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config=p/python \
+            --config=p/fastapi \
+            --config=p/sqlalchemy \
+            --config=p/secrets \
+            --config=p/owasp-top-ten \
+            --config=p/security-audit \
+            --json --output=semgrep-report.json
+        continue-on-error: true
+
+      - name: Upload Semgrep report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: semgrep-security-report
+          path: semgrep-report.json
+          retention-days: 30
