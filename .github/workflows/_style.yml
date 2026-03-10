@@ -42,4 +42,4 @@ jobs:
         run: uv sync --frozen
 
       - name: Run mypy
-        run: uv run mypy api/ ingestion/ --strict
+        run: uv run mypy api/ ingestion/

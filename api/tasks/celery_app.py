@@ -1,18 +1,16 @@
 """
 SentinelAI Celery Application - Minimal Bootstrap
 """
+
 import os
+
 from celery import Celery
 
 # Get broker and backend URLs from environment (set by docker-entrypoint.sh)
 broker_url = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/1")
 result_backend = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/2")
 
-celery_app = Celery(
-    "sentinel-ai",
-    broker=broker_url,
-    backend=result_backend
-)
+celery_app = Celery("sentinel-ai", broker=broker_url, backend=result_backend)
 
 # Basic configuration
 celery_app.conf.update(
@@ -28,6 +26,6 @@ celery_app.conf.update(
 
 
 @celery_app.task(name="sentinel.health_check")
-def health_check_task():
+def health_check_task() -> dict[str, str]:
     """Simple health check task to verify Celery is working."""
     return {"status": "healthy", "service": "celery-worker"}
