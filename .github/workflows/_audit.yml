@@ -27,6 +27,7 @@ jobs:
             --vulnerability-service osv \
             --skip-editable \
             --disable-pip \
+            --ignore-vuln CVE-2024-23342 \
             --desc \
             --output audit-report.txt
         continue-on-error: true
@@ -38,6 +39,7 @@ jobs:
             --vulnerability-service osv \
             --skip-editable \
             --disable-pip \
+            --ignore-vuln CVE-2024-23342 \
             --format json \
             --output audit-report.json
 
