@@ -25,6 +25,7 @@ jobs:
           uvx pip-audit \
             --requirement requirements.audit.txt \
             --vulnerability-service osv \
+            --skip-editable \
             --desc \
             --output audit-report.txt
         continue-on-error: true
@@ -34,6 +35,7 @@ jobs:
           uvx pip-audit \
             --requirement requirements.audit.txt \
             --vulnerability-service osv \
+            --skip-editable \
             --format json \
             --output audit-report.json
 
