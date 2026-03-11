@@ -26,6 +26,7 @@ jobs:
             --requirement requirements.audit.txt \
             --vulnerability-service osv \
             --skip-editable \
+            --disable-pip \
             --desc \
             --output audit-report.txt
         continue-on-error: true
@@ -36,6 +37,7 @@ jobs:
             --requirement requirements.audit.txt \
             --vulnerability-service osv \
             --skip-editable \
+            --disable-pip \
             --format json \
             --output audit-report.json
 
