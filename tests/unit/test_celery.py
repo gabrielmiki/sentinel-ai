@@ -2,8 +2,6 @@
 Tests for Celery application (api/tasks/celery_app.py).
 """
 
-import os
-
 
 class TestCeleryApp:
     """Test Celery application configuration."""

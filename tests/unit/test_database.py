@@ -5,7 +5,6 @@ Tests for database dependency functions (api/database.py).
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import text
 
 
 class TestGetDbDependency:
@@ -55,7 +54,7 @@ class TestGetDbDependency:
             mock_session_maker.return_value.__aexit__ = AsyncMock()
 
             try:
-                async for session in get_db():
+                async for _ in get_db():
                     pass  # Commit will raise error
             except ValueError:
                 pass  # Expected error from commit
