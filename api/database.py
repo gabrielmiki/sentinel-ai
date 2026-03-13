@@ -10,8 +10,12 @@ Provides:
 import os
 from collections.abc import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 # Database URLs from environment variables
 DATABASE_URL = os.getenv(
@@ -42,18 +46,16 @@ vectordb_engine: AsyncEngine = create_async_engine(
     pool_recycle=3600,
 )
 
-# Create session factories
-AsyncSessionLocal = sessionmaker(
+# Create async session factories
+AsyncSessionLocal = async_sessionmaker(
     engine,
-    class_=AsyncSession,
     expire_on_commit=False,
     autocommit=False,
     autoflush=False,
 )
 
-AsyncVectorSessionLocal = sessionmaker(
+AsyncVectorSessionLocal = async_sessionmaker(
     vectordb_engine,
-    class_=AsyncSession,
     expire_on_commit=False,
     autocommit=False,
     autoflush=False,

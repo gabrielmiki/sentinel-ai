@@ -20,7 +20,6 @@ from fastapi.testclient import TestClient
 from httpx import AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
 
 # Environment variables for test databases
 TEST_DATABASE_URL = os.getenv(
@@ -43,6 +42,10 @@ async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
     Create async engine for test database (application data).
 
     Scope: session - reuse engine across all tests for performance.
+
+    Raises:
+        RuntimeError: If database extensions or schema creation fails
+            (e.g., missing superuser privileges, unavailable extensions)
     """
     engine = create_async_engine(
         TEST_DATABASE_URL,
@@ -52,11 +55,20 @@ async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
         max_overflow=10,
     )
 
-    # Initialize schema
-    async with engine.begin() as conn:
-        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
-        await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pg_trgm"'))
-        await conn.execute(text("CREATE SCHEMA IF NOT EXISTS sentinel"))
+    # Initialize schema with explicit error handling
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
+            await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pg_trgm"'))
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS sentinel"))
+    except Exception as e:
+        await engine.dispose()
+        raise RuntimeError(
+            f"Failed to initialize test database schema. "
+            f"Ensure PostgreSQL extensions (uuid-ossp, pg_trgm) are available "
+            f"and user has CREATE EXTENSION privileges. "
+            f"Original error: {e}"
+        ) from e
 
     yield engine
 
@@ -70,6 +82,10 @@ async def vectordb_engine() -> AsyncGenerator[AsyncEngine, None]:
     Create async engine for vector database (embeddings).
 
     Scope: session - reuse engine across all tests for performance.
+
+    Raises:
+        RuntimeError: If pgvector extension or schema creation fails
+            (e.g., missing pgvector installation, insufficient privileges)
     """
     engine = create_async_engine(
         TEST_VECTORDB_URL,
@@ -79,10 +95,19 @@ async def vectordb_engine() -> AsyncGenerator[AsyncEngine, None]:
         max_overflow=10,
     )
 
-    # Initialize schema
-    async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        await conn.execute(text("CREATE SCHEMA IF NOT EXISTS embeddings"))
+    # Initialize schema with explicit error handling
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            await conn.execute(text("CREATE SCHEMA IF NOT EXISTS embeddings"))
+    except Exception as e:
+        await engine.dispose()
+        raise RuntimeError(
+            f"Failed to initialize vector database schema. "
+            f"Ensure pgvector extension is installed (apt-get install postgresql-16-pgvector) "
+            f"and user has CREATE EXTENSION privileges. "
+            f"Original error: {e}"
+        ) from e
 
     yield engine
 
@@ -97,17 +122,17 @@ async def db_session(db_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, Non
 
     Ensures test isolation by rolling back all changes after each test.
     """
-    async_session_maker = sessionmaker(
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    async_session_maker = async_sessionmaker(
         db_engine,
-        class_=AsyncSession,
         expire_on_commit=False,
     )
 
-    async with async_session_maker() as session:
-        # Start a transaction
-        async with session.begin():
-            yield session
-            # Rollback happens automatically when context exits
+    # Combine context managers per SIM117
+    async with async_session_maker() as session, session.begin():
+        yield session
+        # Rollback happens automatically when context exits
 
 
 @pytest_asyncio.fixture
@@ -119,15 +144,16 @@ async def vectordb_session(
 
     Ensures test isolation for embedding operations.
     """
-    async_session_maker = sessionmaker(
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    async_session_maker = async_sessionmaker(
         vectordb_engine,
-        class_=AsyncSession,
         expire_on_commit=False,
     )
 
-    async with async_session_maker() as session:
-        async with session.begin():
-            yield session
+    # Combine context managers per SIM117
+    async with async_session_maker() as session, session.begin():
+        yield session
 
 
 # ==================== FastAPI TestClient Fixtures ====================
@@ -168,12 +194,23 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
         async def test_create_user(client: AsyncClient):
             response = await client.post("/api/users", json={"username": "test"})
             assert response.status_code == 201
+
+    Raises:
+        ImportError: If circular imports prevent loading api.database or api.main
     """
     # Import inside fixture to avoid circular imports at module load time
-    from httpx import ASGITransport
+    try:
+        from httpx import ASGITransport
 
-    from api.database import get_db
-    from api.main import app
+        from api.database import get_db
+        from api.main import app
+    except ImportError as e:
+        raise ImportError(
+            f"Failed to import FastAPI app or database dependencies. "
+            f"This may indicate a circular import issue. "
+            f"Check that api.database and api.main do not import test modules. "
+            f"Original error: {e}"
+        ) from e
 
     # Override database dependency to use test session
     app.dependency_overrides[get_db] = lambda: db_session
@@ -208,12 +245,23 @@ async def vectordb_client(
                 json={"query": "database connection error"}
             )
             assert response.status_code == 200
+
+    Raises:
+        ImportError: If circular imports prevent loading api.database or api.main
     """
     # Import inside fixture to avoid circular imports at module load time
-    from httpx import ASGITransport
+    try:
+        from httpx import ASGITransport
 
-    from api.database import get_vectordb
-    from api.main import app
+        from api.database import get_vectordb
+        from api.main import app
+    except ImportError as e:
+        raise ImportError(
+            f"Failed to import FastAPI app or database dependencies. "
+            f"This may indicate a circular import issue. "
+            f"Check that api.database and api.main do not import test modules. "
+            f"Original error: {e}"
+        ) from e
 
     # Override vector database dependency to use test session
     app.dependency_overrides[get_vectordb] = lambda: vectordb_session
@@ -492,6 +540,10 @@ def create_test_user(db_session: AsyncSession) -> Any:
 
     Usage:
         user = await create_test_user(username="testuser")
+
+    Raises:
+        RuntimeError: If user creation fails due to FK violations, unique constraints,
+            schema mismatches, or missing columns. Includes the attempted data for debugging.
     """
 
     async def _create_user(**kwargs: Any) -> Any:
@@ -516,9 +568,18 @@ def create_test_user(db_session: AsyncSession) -> Any:
             """
         )
 
-        result = await db_session.execute(query, user_data)
-        await db_session.commit()
-        return result.fetchone()
+        try:
+            result = await db_session.execute(query, user_data)
+            await db_session.commit()
+            return result.fetchone()
+        except Exception as e:
+            await db_session.rollback()
+            raise RuntimeError(
+                f"Failed to create test user. Check for schema mismatches, "
+                f"unique constraint violations, or missing sentinel.users table. "
+                f"Attempted data: {user_data}. "
+                f"Original error: {e}"
+            ) from e
 
     return _create_user
 
@@ -530,6 +591,10 @@ def create_test_incident(db_session: AsyncSession) -> Any:
 
     Usage:
         incident = await create_test_incident(title="Test incident", severity="high")
+
+    Raises:
+        RuntimeError: If incident creation fails due to FK violations (invalid created_by),
+            schema mismatches, or missing columns. Includes the attempted data for debugging.
     """
 
     async def _create_incident(**kwargs: Any) -> Any:
@@ -550,8 +615,17 @@ def create_test_incident(db_session: AsyncSession) -> Any:
             """
         )
 
-        result = await db_session.execute(query, incident_data)
-        await db_session.commit()
-        return result.fetchone()
+        try:
+            result = await db_session.execute(query, incident_data)
+            await db_session.commit()
+            return result.fetchone()
+        except Exception as e:
+            await db_session.rollback()
+            raise RuntimeError(
+                f"Failed to create test incident. Check for FK violations (created_by must "
+                f"reference existing user), schema mismatches, or missing sentinel.incidents table. "
+                f"Attempted data: {incident_data}. "
+                f"Original error: {e}"
+            ) from e
 
     return _create_incident
