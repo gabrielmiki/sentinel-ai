@@ -22,12 +22,8 @@ class Runbook(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(String(100)), nullable=True)
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    created_by: Mapped[str | None] = mapped_column(
-        ForeignKey("sentinel.users.id"), nullable=True
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(UTC), nullable=False
-    )
+    created_by: Mapped[str | None] = mapped_column(ForeignKey("sentinel.users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),

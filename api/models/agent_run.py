@@ -27,9 +27,7 @@ class AgentRun(Base):
     input_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     output_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(UTC), nullable=False
-    )
+    started_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
