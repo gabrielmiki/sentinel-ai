@@ -25,18 +25,22 @@ class TestDatabaseFixtures:
     @pytest.mark.asyncio
     async def test_db_session_rollback_isolation(self, db_session: AsyncSession) -> None:
         """Verify changes are rolled back after test (test isolation)."""
-        # Insert test data
+        from uuid import uuid4
+
+        # Insert test data with explicit id (required for string UUID pk)
+        test_id = str(uuid4())
         await db_session.execute(
             text(
                 """
-                INSERT INTO sentinel.users (username, email, hashed_password)
-                VALUES ('temp_user', 'temp@example.com', 'hash123')
+                INSERT INTO sentinel.users (id, username, email, hashed_password)
+                VALUES (:id, 'temp_user', 'temp@example.com', 'hash123')
                 """
-            )
+            ),
+            {"id": test_id},
         )
-        await db_session.commit()
+        # No commit needed - fixture manages transaction
 
-        # Verify insert worked
+        # Verify insert worked within the transaction
         result = await db_session.execute(
             text("SELECT username FROM sentinel.users WHERE username = 'temp_user'")
         )

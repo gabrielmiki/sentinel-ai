@@ -149,12 +149,14 @@ async def db_session(db_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, Non
     async_session_maker = async_sessionmaker(
         db_engine,
         expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
     )
 
-    # Combine context managers per SIM117
-    async with async_session_maker() as session, session.begin():
-        yield session
-        # Rollback happens automatically when context exits
+    async with async_session_maker() as session:  # noqa: SIM117
+        async with session.begin():
+            yield session
+            # Transaction is automatically rolled back on exit (not committed)
 
 
 @pytest_asyncio.fixture
@@ -171,11 +173,14 @@ async def vectordb_session(
     async_session_maker = async_sessionmaker(
         vectordb_engine,
         expire_on_commit=False,
+        autocommit=False,
+        autoflush=False,
     )
 
-    # Combine context managers per SIM117
-    async with async_session_maker() as session, session.begin():
-        yield session
+    async with async_session_maker() as session:  # noqa: SIM117
+        async with session.begin():
+            yield session
+            # Transaction is automatically rolled back on exit (not committed)
 
 
 # ==================== FastAPI TestClient Fixtures ====================
@@ -597,10 +602,9 @@ def create_test_user(db_session: AsyncSession) -> Any:
 
         try:
             result = await db_session.execute(query, user_data)
-            await db_session.commit()
+            # No commit needed - fixture manages transaction lifecycle
             return result.fetchone()
         except Exception as e:
-            await db_session.rollback()
             raise RuntimeError(
                 f"Failed to create test user. Check for schema mismatches, "
                 f"unique constraint violations, or missing sentinel.users table. "
@@ -644,10 +648,9 @@ def create_test_incident(db_session: AsyncSession) -> Any:
 
         try:
             result = await db_session.execute(query, incident_data)
-            await db_session.commit()
+            # No commit needed - fixture manages transaction lifecycle
             return result.fetchone()
         except Exception as e:
-            await db_session.rollback()
             raise RuntimeError(
                 f"Failed to create test incident. Check for FK violations (created_by must "
                 f"reference existing user), schema mismatches, or missing sentinel.incidents table. "
