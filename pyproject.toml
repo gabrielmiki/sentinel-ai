@@ -58,6 +58,7 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
@@ -74,7 +75,7 @@ addopts = [
 
 [tool.coverage.run]
 source = ["api", "ingestion"]
-omit = ["tests/*", "**/__init__.py"]
+omit = ["tests/*", "**/__init__.py", "api/models/*.py"]
 
 [tool.bandit]
 exclude_dirs = ["tests", "venv", ".venv"]

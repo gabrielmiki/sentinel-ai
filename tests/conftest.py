@@ -58,13 +58,22 @@ async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
     # Initialize schema with explicit error handling
     try:
         async with engine.begin() as conn:
+            # Create required PostgreSQL extensions
             await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"'))
             await conn.execute(text('CREATE EXTENSION IF NOT EXISTS "pg_trgm"'))
+
+            # Create schema
             await conn.execute(text("CREATE SCHEMA IF NOT EXISTS sentinel"))
+
+            # Import all models to ensure they're registered with Base.metadata
+            from api.models import AgentRun, Base, Incident, Runbook, User  # noqa: F401
+
+            # Create all tables from ORM model definitions
+            await conn.run_sync(Base.metadata.create_all)
     except Exception as e:
         await engine.dispose()
         raise RuntimeError(
-            f"Failed to initialize test database schema. "
+            f"Failed to initialize test database schema and tables. "
             f"Ensure PostgreSQL extensions (uuid-ossp, pg_trgm) are available "
             f"and user has CREATE EXTENSION privileges. "
             f"Original error: {e}"
@@ -98,12 +107,25 @@ async def vectordb_engine() -> AsyncGenerator[AsyncEngine, None]:
     # Initialize schema with explicit error handling
     try:
         async with engine.begin() as conn:
+            # Create pgvector extension
             await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+
+            # Create schema
             await conn.execute(text("CREATE SCHEMA IF NOT EXISTS embeddings"))
+
+            # Import all vector models to ensure they're registered with VectorBase.metadata
+            from api.models import (  # noqa: F401
+                IncidentEmbedding,
+                RunbookEmbedding,
+                VectorBase,
+            )
+
+            # Create all tables from ORM model definitions
+            await conn.run_sync(VectorBase.metadata.create_all)
     except Exception as e:
         await engine.dispose()
         raise RuntimeError(
-            f"Failed to initialize vector database schema. "
+            f"Failed to initialize vector database schema and tables. "
             f"Ensure pgvector extension is installed (apt-get install postgresql-16-pgvector) "
             f"and user has CREATE EXTENSION privileges. "
             f"Original error: {e}"
@@ -551,11 +573,16 @@ def create_test_user(db_session: AsyncSession) -> Any:
 
         pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+        # Get password and ensure it's within bcrypt's 72-byte limit
+        password = kwargs.get("password", "testpass123")
+        if len(password.encode("utf-8")) > 72:
+            password = password[:72]
+
         user_data = {
-            "id": uuid4(),
+            "id": str(uuid4()),
             "username": kwargs.get("username", f"user_{uuid4().hex[:8]}"),
             "email": kwargs.get("email", f"user_{uuid4().hex[:8]}@example.com"),
-            "hashed_password": pwd_context.hash(kwargs.get("password", "testpass123")),
+            "hashed_password": pwd_context.hash(password),
             "is_active": kwargs.get("is_active", True),
             "is_superuser": kwargs.get("is_superuser", False),
         }
@@ -599,7 +626,7 @@ def create_test_incident(db_session: AsyncSession) -> Any:
 
     async def _create_incident(**kwargs: Any) -> Any:
         incident_data = {
-            "id": uuid4(),
+            "id": str(uuid4()),
             "title": kwargs.get("title", "Test incident"),
             "description": kwargs.get("description", "Test description"),
             "severity": kwargs.get("severity", "medium"),
