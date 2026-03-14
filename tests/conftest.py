@@ -8,6 +8,7 @@ Provides fixtures for:
 - Sample data factories
 """
 
+import asyncio
 import os
 from collections.abc import AsyncGenerator, Generator
 from typing import Any
@@ -31,6 +32,23 @@ TEST_VECTORDB_URL = os.getenv(
     "postgresql+asyncpg://vectoradmin:vectorpass@localhost:5433/vectordb_test",
 )
 TEST_REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+
+# ==================== Event Loop Fixture ====================
+
+
+@pytest.fixture(scope="session")
+def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
+    """
+    Session-scoped event loop for session-scoped async fixtures.
+
+    Required to prevent "got Future attached to a different loop" errors
+    when using session-scoped async fixtures (db_engine, vectordb_engine).
+    """
+    policy = asyncio.get_event_loop_policy()
+    loop = policy.new_event_loop()
+    yield loop
+    loop.close()
 
 
 # ==================== Database Fixtures ====================
@@ -580,8 +598,10 @@ def create_test_user(db_session: AsyncSession) -> Any:
 
         # Get password and ensure it's within bcrypt's 72-byte limit
         password = kwargs.get("password", "testpass123")
-        if len(password.encode("utf-8")) > 72:
-            password = password[:72]
+        password_bytes = password.encode("utf-8")
+        if len(password_bytes) > 72:
+            # Truncate at byte level, not character level
+            password = password_bytes[:72].decode("utf-8", errors="ignore")
 
         user_data = {
             "id": str(uuid4()),

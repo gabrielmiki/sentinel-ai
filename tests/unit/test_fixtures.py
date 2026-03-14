@@ -27,13 +27,13 @@ class TestDatabaseFixtures:
         """Verify changes are rolled back after test (test isolation)."""
         from uuid import uuid4
 
-        # Insert test data with explicit id (required for string UUID pk)
+        # Insert test data with explicit id and boolean fields
         test_id = str(uuid4())
         await db_session.execute(
             text(
                 """
-                INSERT INTO sentinel.users (id, username, email, hashed_password)
-                VALUES (:id, 'temp_user', 'temp@example.com', 'hash123')
+                INSERT INTO sentinel.users (id, username, email, hashed_password, is_active, is_superuser)
+                VALUES (:id, 'temp_user', 'temp@example.com', 'hash123', true, false)
                 """
             ),
             {"id": test_id},
