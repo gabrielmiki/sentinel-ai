@@ -2,8 +2,7 @@
 Runbook model for storing operational procedures and documentation.
 """
 
-from datetime import datetime, timezone
-from typing import Optional
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from sqlalchemy import ARRAY, ForeignKey, String, Text
@@ -21,19 +20,17 @@ class Runbook(Base):
     id: Mapped[str] = mapped_column(primary_key=True, default=lambda: str(uuid4()))
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    tags: Mapped[Optional[list[str]]] = mapped_column(
-        ARRAY(String(100)), nullable=True
-    )
-    category: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    created_by: Mapped[Optional[str]] = mapped_column(
+    tags: Mapped[list[str] | None] = mapped_column(ARRAY(String(100)), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(
         ForeignKey("sentinel.users.id"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc), nullable=False
+        default=lambda: datetime.now(UTC), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 

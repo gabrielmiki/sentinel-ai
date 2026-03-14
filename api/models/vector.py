@@ -2,8 +2,8 @@
 Vector database models for storing embeddings.
 """
 
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 from pgvector.sqlalchemy import Vector
@@ -23,10 +23,10 @@ class RunbookEmbedding(VectorBase):
     id: Mapped[str] = mapped_column(primary_key=True, default=lambda: str(uuid4()))
     runbook_id: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[Optional[Any]] = mapped_column(Vector(1536), nullable=True)
-    metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    embedding: Mapped[Any | None] = mapped_column(Vector(1536), nullable=True)
+    meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc), nullable=False
+        default=lambda: datetime.now(UTC), nullable=False
     )
 
     def __repr__(self) -> str:
@@ -42,10 +42,10 @@ class IncidentEmbedding(VectorBase):
     id: Mapped[str] = mapped_column(primary_key=True, default=lambda: str(uuid4()))
     incident_id: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[Optional[Any]] = mapped_column(Vector(1536), nullable=True)
-    metadata: Mapped[Optional[dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    embedding: Mapped[Any | None] = mapped_column(Vector(1536), nullable=True)
+    meta: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        default=lambda: datetime.now(timezone.utc), nullable=False
+        default=lambda: datetime.now(UTC), nullable=False
     )
 
     def __repr__(self) -> str:
