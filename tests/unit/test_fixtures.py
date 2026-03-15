@@ -2,6 +2,10 @@
 Test suite to verify conftest.py fixtures work correctly.
 
 This module serves as both documentation and validation for the test fixtures.
+
+Tests marked with @pytest.mark.database require PostgreSQL and Redis infrastructure.
+Run with: pytest -m database (when databases are available)
+Skip with: pytest -m "not database" (default behavior)
 """
 
 import pytest
@@ -11,6 +15,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
+@pytest.mark.database
 class TestDatabaseFixtures:
     """Test database session fixtures."""
 
@@ -73,6 +78,7 @@ class TestFastAPIFixtures:
         assert response.status_code == 200  # Health endpoint works
 
     @pytest.mark.asyncio
+    @pytest.mark.database
     async def test_async_client_works(self, client: AsyncClient) -> None:
         """Verify asynchronous client can call endpoints."""
         response = await client.get("/health")
@@ -82,12 +88,14 @@ class TestFastAPIFixtures:
         assert data["service"] == "sentinel-ai"
 
     @pytest.mark.asyncio
+    @pytest.mark.database
     async def test_async_client_has_json_header(self, client: AsyncClient) -> None:
         """Verify async client has default Content-Type header."""
         # The client fixture sets Content-Type: application/json by default
         assert client.headers.get("Content-Type") == "application/json"
 
     @pytest.mark.asyncio
+    @pytest.mark.database
     async def test_async_client_uses_test_db_session(
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
@@ -230,6 +238,7 @@ class TestSampleDataFixtures:
         assert isinstance(sample_agent_state["metrics"], list)
 
 
+@pytest.mark.database
 class TestIntegrationHelpers:
     """Test integration helper fixtures."""
 

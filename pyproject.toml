@@ -65,6 +65,9 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
+markers = [
+    "database: marks tests requiring PostgreSQL and Redis infrastructure (deselect with '-m \"not database\"')",
+]
 addopts = [
     "--cov=api",
     "--cov=ingestion",
@@ -73,6 +76,8 @@ addopts = [
     "--cov-report=html",
     "--cov-fail-under=80",
     "--tb=short",
+    "-m",
+    "not database",
 ]
 
 [tool.coverage.run]
