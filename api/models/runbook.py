@@ -22,6 +22,8 @@ class Runbook(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     tags: Mapped[list[str] | None] = mapped_column(ARRAY(String(100)), nullable=True)
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    chunk_count: Mapped[int | None] = mapped_column(default=0, nullable=True)
+    source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_by: Mapped[str | None] = mapped_column(ForeignKey("sentinel.users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), default=lambda: datetime.now(UTC), nullable=False

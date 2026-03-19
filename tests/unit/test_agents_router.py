@@ -1,0 +1,600 @@
+"""
+Tests for agents router endpoints.
+"""
+
+import pytest
+from httpx import AsyncClient
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+
+@pytest.mark.database
+class TestTriggerAgentRun:
+    """Tests for POST /api/v1/agents/run/{incident_id} endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_trigger_agent_run_returns_202(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify trigger agent run endpoint returns 202 Accepted."""
+        # Create incident first
+        incident_id = await self._create_incident(db_session, "Test Incident", "critical")
+
+        response = await client.post(f"/api/v1/agents/run/{incident_id}")
+        assert response.status_code == 202
+
+    @pytest.mark.asyncio
+    async def test_trigger_agent_run_returns_correct_structure(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify trigger agent run returns expected JSON structure."""
+        # Create incident first
+        incident_id = await self._create_incident(
+            db_session, "Database down", "critical"
+        )
+
+        response = await client.post(f"/api/v1/agents/run/{incident_id}")
+        data = response.json()
+
+        # Verify all required fields are present
+        assert "id" in data
+        assert "incident_id" in data
+        assert "status" in data
+        assert "current_node" in data
+        assert "completed_nodes" in data
+        assert "input_data" in data
+        assert "output_data" in data
+        assert "error_message" in data
+        assert "started_at" in data
+        assert "completed_at" in data
+        assert "duration_ms" in data
+
+    @pytest.mark.asyncio
+    async def test_trigger_agent_run_creates_agent_run_in_database(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify agent run is created in database."""
+        # Create incident first
+        incident_id = await self._create_incident(
+            db_session, "High memory usage", "high"
+        )
+
+        response = await client.post(f"/api/v1/agents/run/{incident_id}")
+        data = response.json()
+
+        run_id = data["id"]
+
+        # Verify run exists in database
+        query = text("SELECT id, incident_id, status FROM sentinel.agent_runs WHERE id = :id")
+        result = await db_session.execute(query, {"id": run_id})
+        row = result.fetchone()
+
+        assert row is not None
+        assert row[0] == run_id
+        assert row[1] == incident_id
+        assert row[2] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_trigger_agent_run_populates_input_data(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify input_data contains incident details."""
+        # Create incident with specific details
+        incident_id = await self._create_incident(
+            db_session,
+            title="Disk space critical",
+            severity="critical",
+            description="Disk usage at 95%",
+        )
+
+        response = await client.post(f"/api/v1/agents/run/{incident_id}")
+        data = response.json()
+
+        # Verify input_data structure
+        assert data["input_data"] is not None
+        assert data["input_data"]["incident_id"] == incident_id
+        assert data["input_data"]["incident_title"] == "Disk space critical"
+        assert data["input_data"]["incident_description"] == "Disk usage at 95%"
+        assert data["input_data"]["severity"] == "critical"
+
+    @pytest.mark.asyncio
+    async def test_trigger_agent_run_sets_pending_status(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify initial status is 'pending'."""
+        # Create incident
+        incident_id = await self._create_incident(db_session, "Network timeout", "medium")
+
+        response = await client.post(f"/api/v1/agents/run/{incident_id}")
+        data = response.json()
+
+        assert data["status"] == "pending"
+
+    @pytest.mark.asyncio
+    async def test_trigger_agent_run_initializes_completed_nodes_as_empty_list(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify completed_nodes is initialized as empty list."""
+        # Create incident
+        incident_id = await self._create_incident(db_session, "SSL cert expiring", "low")
+
+        response = await client.post(f"/api/v1/agents/run/{incident_id}")
+        data = response.json()
+
+        assert data["completed_nodes"] == []
+
+    @pytest.mark.asyncio
+    async def test_trigger_agent_run_returns_404_when_incident_not_found(
+        self, client: AsyncClient
+    ) -> None:
+        """Verify 404 is returned when incident doesn't exist."""
+        nonexistent_id = "00000000-0000-0000-0000-000000000000"
+
+        response = await client.post(f"/api/v1/agents/run/{nonexistent_id}")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_trigger_agent_run_returns_error_message_when_incident_not_found(
+        self, client: AsyncClient
+    ) -> None:
+        """Verify proper error message when incident doesn't exist."""
+        nonexistent_id = "00000000-0000-0000-0000-000000000000"
+
+        response = await client.post(f"/api/v1/agents/run/{nonexistent_id}")
+        data = response.json()
+
+        assert "detail" in data
+        assert f"Incident {nonexistent_id} not found" in data["detail"]
+
+    # Helper method
+    async def _create_incident(
+        self,
+        db_session: AsyncSession,
+        title: str,
+        severity: str,
+        description: str | None = None,
+    ) -> str:
+        """Create an incident and return its ID."""
+        query = text(
+            """
+            INSERT INTO sentinel.incidents
+            (id, title, description, severity, status)
+            VALUES (gen_random_uuid(), :title, :description, :severity, 'open')
+            RETURNING id
+            """
+        )
+
+        result = await db_session.execute(
+            query,
+            {
+                "title": title,
+                "description": description,
+                "severity": severity,
+            },
+        )
+        await db_session.commit()
+
+        row = result.fetchone()
+        return str(row[0])
+
+
+@pytest.mark.database
+class TestGetAgentRun:
+    """Tests for GET /api/v1/agents/runs/{run_id} endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_get_agent_run_returns_200(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify get agent run endpoint returns 200 OK."""
+        # Create incident and agent run
+        incident_id = await self._create_incident(db_session, "Test Incident", "critical")
+        run_id = await self._create_agent_run(db_session, incident_id)
+
+        response = await client.get(f"/api/v1/agents/runs/{run_id}")
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_get_agent_run_returns_correct_structure(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify get agent run returns expected JSON structure."""
+        # Create incident and agent run
+        incident_id = await self._create_incident(db_session, "Database down", "high")
+        run_id = await self._create_agent_run(db_session, incident_id)
+
+        response = await client.get(f"/api/v1/agents/runs/{run_id}")
+        data = response.json()
+
+        # Verify all required fields are present
+        assert "id" in data
+        assert "incident_id" in data
+        assert "status" in data
+        assert "current_node" in data
+        assert "completed_nodes" in data
+        assert "input_data" in data
+        assert "output_data" in data
+        assert "error_message" in data
+        assert "started_at" in data
+        assert "completed_at" in data
+        assert "duration_ms" in data
+
+    @pytest.mark.asyncio
+    async def test_get_agent_run_returns_correct_data(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify get agent run returns correct run data."""
+        # Create incident and agent run
+        incident_id = await self._create_incident(db_session, "Memory leak", "critical")
+        run_id = await self._create_agent_run(
+            db_session,
+            incident_id,
+            status="running",
+            current_node="analyze_metrics",
+        )
+
+        response = await client.get(f"/api/v1/agents/runs/{run_id}")
+        data = response.json()
+
+        assert data["id"] == run_id
+        assert data["incident_id"] == incident_id
+        assert data["status"] == "running"
+        assert data["current_node"] == "analyze_metrics"
+
+    @pytest.mark.asyncio
+    async def test_get_agent_run_returns_404_when_run_not_found(
+        self, client: AsyncClient
+    ) -> None:
+        """Verify 404 is returned when agent run doesn't exist."""
+        nonexistent_id = "00000000-0000-0000-0000-000000000000"
+
+        response = await client.get(f"/api/v1/agents/runs/{nonexistent_id}")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_agent_run_returns_error_message_when_run_not_found(
+        self, client: AsyncClient
+    ) -> None:
+        """Verify proper error message when agent run doesn't exist."""
+        nonexistent_id = "00000000-0000-0000-0000-000000000000"
+
+        response = await client.get(f"/api/v1/agents/runs/{nonexistent_id}")
+        data = response.json()
+
+        assert "detail" in data
+        assert f"Agent run {nonexistent_id} not found" in data["detail"]
+
+    # Helper methods
+    async def _create_incident(
+        self,
+        db_session: AsyncSession,
+        title: str,
+        severity: str,
+        description: str | None = None,
+    ) -> str:
+        """Create an incident and return its ID."""
+        query = text(
+            """
+            INSERT INTO sentinel.incidents
+            (id, title, description, severity, status)
+            VALUES (gen_random_uuid(), :title, :description, :severity, 'open')
+            RETURNING id
+            """
+        )
+
+        result = await db_session.execute(
+            query,
+            {
+                "title": title,
+                "description": description,
+                "severity": severity,
+            },
+        )
+        await db_session.commit()
+
+        row = result.fetchone()
+        return str(row[0])
+
+    async def _create_agent_run(
+        self,
+        db_session: AsyncSession,
+        incident_id: str,
+        status: str = "pending",
+        current_node: str | None = None,
+    ) -> str:
+        """Create an agent run and return its ID."""
+        query = text(
+            """
+            INSERT INTO sentinel.agent_runs
+            (id, incident_id, status, current_node, completed_nodes, input_data)
+            VALUES (gen_random_uuid(), :incident_id, :status, :current_node, '[]'::jsonb, '{}'::jsonb)
+            RETURNING id
+            """
+        )
+
+        result = await db_session.execute(
+            query,
+            {
+                "incident_id": incident_id,
+                "status": status,
+                "current_node": current_node,
+            },
+        )
+        await db_session.commit()
+
+        row = result.fetchone()
+        return str(row[0])
+
+
+@pytest.mark.database
+class TestStreamAgentRun:
+    """Tests for GET /api/v1/agents/runs/{run_id}/stream endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_stream_agent_run_returns_404_when_run_not_found(
+        self, client: AsyncClient
+    ) -> None:
+        """Verify 404 is returned when agent run doesn't exist."""
+        nonexistent_id = "00000000-0000-0000-0000-000000000000"
+
+        response = await client.get(f"/api/v1/agents/runs/{nonexistent_id}/stream")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_stream_agent_run_returns_error_message_when_run_not_found(
+        self, client: AsyncClient
+    ) -> None:
+        """Verify proper error message when agent run doesn't exist."""
+        nonexistent_id = "00000000-0000-0000-0000-000000000000"
+
+        response = await client.get(f"/api/v1/agents/runs/{nonexistent_id}/stream")
+        data = response.json()
+
+        assert "detail" in data
+        assert f"Agent run {nonexistent_id} not found" in data["detail"]
+
+    @pytest.mark.asyncio
+    async def test_stream_agent_run_returns_sse_response(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify stream endpoint returns proper SSE response."""
+        # Create incident and agent run
+        incident_id = await self._create_incident(db_session, "Test Incident", "critical")
+        run_id = await self._create_agent_run(db_session, incident_id, status="completed")
+
+        # Note: SSE responses are special - httpx test client may handle them differently
+        # This test verifies the endpoint is accessible and returns a response
+        response = await client.get(
+            f"/api/v1/agents/runs/{run_id}/stream",
+            headers={"Accept": "text/event-stream"},
+        )
+
+        # For SSE, we expect either 200 or the response to be streaming
+        # The actual streaming behavior is tested in integration tests
+        assert response.status_code == 200
+
+    # Helper methods
+    async def _create_incident(
+        self,
+        db_session: AsyncSession,
+        title: str,
+        severity: str,
+        description: str | None = None,
+    ) -> str:
+        """Create an incident and return its ID."""
+        query = text(
+            """
+            INSERT INTO sentinel.incidents
+            (id, title, description, severity, status)
+            VALUES (gen_random_uuid(), :title, :description, :severity, 'open')
+            RETURNING id
+            """
+        )
+
+        result = await db_session.execute(
+            query,
+            {
+                "title": title,
+                "description": description,
+                "severity": severity,
+            },
+        )
+        await db_session.commit()
+
+        row = result.fetchone()
+        return str(row[0])
+
+    async def _create_agent_run(
+        self,
+        db_session: AsyncSession,
+        incident_id: str,
+        status: str = "pending",
+        current_node: str | None = None,
+    ) -> str:
+        """Create an agent run and return its ID."""
+        query = text(
+            """
+            INSERT INTO sentinel.agent_runs
+            (id, incident_id, status, current_node, completed_nodes, input_data)
+            VALUES (gen_random_uuid(), :incident_id, :status, :current_node, '[]'::jsonb, '{}'::jsonb)
+            RETURNING id
+            """
+        )
+
+        result = await db_session.execute(
+            query,
+            {
+                "incident_id": incident_id,
+                "status": status,
+                "current_node": current_node,
+            },
+        )
+        await db_session.commit()
+
+        row = result.fetchone()
+        return str(row[0])
+
+
+@pytest.mark.database
+class TestCancelAgentRun:
+    """Tests for POST /api/v1/agents/runs/{run_id}/cancel endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_agent_run_returns_204_for_pending_run(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify cancel returns 204 No Content for pending run."""
+        # Create incident and pending agent run
+        incident_id = await self._create_incident(db_session, "Test Incident", "critical")
+        run_id = await self._create_agent_run(db_session, incident_id, status="pending")
+
+        response = await client.post(f"/api/v1/agents/runs/{run_id}/cancel")
+        assert response.status_code == 204
+
+    @pytest.mark.asyncio
+    async def test_cancel_agent_run_returns_204_for_running_run(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify cancel returns 204 No Content for running run."""
+        # Create incident and running agent run
+        incident_id = await self._create_incident(db_session, "Database down", "high")
+        run_id = await self._create_agent_run(db_session, incident_id, status="running")
+
+        response = await client.post(f"/api/v1/agents/runs/{run_id}/cancel")
+        assert response.status_code == 204
+
+    @pytest.mark.asyncio
+    async def test_cancel_agent_run_sets_status_to_cancelled(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify cancel sets status to 'cancelled' in database."""
+        # Create incident and agent run
+        incident_id = await self._create_incident(db_session, "Memory leak", "critical")
+        run_id = await self._create_agent_run(db_session, incident_id, status="running")
+
+        await client.post(f"/api/v1/agents/runs/{run_id}/cancel")
+
+        # Verify status was updated in database
+        query = text("SELECT status FROM sentinel.agent_runs WHERE id = :id")
+        result = await db_session.execute(query, {"id": run_id})
+        row = result.fetchone()
+
+        assert row is not None
+        assert row[0] == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_cancel_agent_run_sets_completed_at_timestamp(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify cancel sets completed_at timestamp."""
+        # Create incident and agent run
+        incident_id = await self._create_incident(db_session, "Disk full", "high")
+        run_id = await self._create_agent_run(db_session, incident_id, status="pending")
+
+        await client.post(f"/api/v1/agents/runs/{run_id}/cancel")
+
+        # Verify completed_at was set in database
+        query = text("SELECT completed_at FROM sentinel.agent_runs WHERE id = :id")
+        result = await db_session.execute(query, {"id": run_id})
+        row = result.fetchone()
+
+        assert row is not None
+        assert row[0] is not None
+
+    @pytest.mark.asyncio
+    async def test_cancel_agent_run_returns_404_when_run_not_found(
+        self, client: AsyncClient
+    ) -> None:
+        """Verify 404 is returned when agent run doesn't exist."""
+        nonexistent_id = "00000000-0000-0000-0000-000000000000"
+
+        response = await client.post(f"/api/v1/agents/runs/{nonexistent_id}/cancel")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_cancel_agent_run_returns_404_when_already_completed(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify 404 is returned when agent run is already completed."""
+        # Create incident and completed agent run
+        incident_id = await self._create_incident(db_session, "Test Incident", "medium")
+        run_id = await self._create_agent_run(db_session, incident_id, status="completed")
+
+        response = await client.post(f"/api/v1/agents/runs/{run_id}/cancel")
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_cancel_agent_run_returns_error_message_for_completed_run(
+        self, client: AsyncClient, db_session: AsyncSession
+    ) -> None:
+        """Verify proper error message for already completed run."""
+        # Create incident and completed agent run
+        incident_id = await self._create_incident(db_session, "SSL expiring", "low")
+        run_id = await self._create_agent_run(db_session, incident_id, status="completed")
+
+        response = await client.post(f"/api/v1/agents/runs/{run_id}/cancel")
+        data = response.json()
+
+        assert "detail" in data
+        assert f"Agent run {run_id} not found or already completed" in data["detail"]
+
+    # Helper methods
+    async def _create_incident(
+        self,
+        db_session: AsyncSession,
+        title: str,
+        severity: str,
+        description: str | None = None,
+    ) -> str:
+        """Create an incident and return its ID."""
+        query = text(
+            """
+            INSERT INTO sentinel.incidents
+            (id, title, description, severity, status)
+            VALUES (gen_random_uuid(), :title, :description, :severity, 'open')
+            RETURNING id
+            """
+        )
+
+        result = await db_session.execute(
+            query,
+            {
+                "title": title,
+                "description": description,
+                "severity": severity,
+            },
+        )
+        await db_session.commit()
+
+        row = result.fetchone()
+        return str(row[0])
+
+    async def _create_agent_run(
+        self,
+        db_session: AsyncSession,
+        incident_id: str,
+        status: str = "pending",
+        current_node: str | None = None,
+    ) -> str:
+        """Create an agent run and return its ID."""
+        query = text(
+            """
+            INSERT INTO sentinel.agent_runs
+            (id, incident_id, status, current_node, completed_nodes, input_data)
+            VALUES (gen_random_uuid(), :incident_id, :status, :current_node, '[]'::jsonb, '{}'::jsonb)
+            RETURNING id
+            """
+        )
+
+        result = await db_session.execute(
+            query,
+            {
+                "incident_id": incident_id,
+                "status": status,
+                "current_node": current_node,
+            },
+        )
+        await db_session.commit()
+
+        row = result.fetchone()
+        return str(row[0])

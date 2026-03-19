@@ -5,7 +5,7 @@ Incident model for tracking monitoring incidents.
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from sqlalchemy import ForeignKey, String, Text, func
+from sqlalchemy import ForeignKey, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from api.models.base import Base
@@ -22,6 +22,13 @@ class Incident(Base):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     severity: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="open", nullable=False)
+    affected_service: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    assignee: Mapped[str | None] = mapped_column(ForeignKey("sentinel.users.id"), nullable=True)
+    resolution_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agent_report: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archived: Mapped[bool] = mapped_column(
+        default=False, server_default=text("false"), nullable=False
+    )
     created_by: Mapped[str | None] = mapped_column(ForeignKey("sentinel.users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), default=lambda: datetime.now(UTC), nullable=False

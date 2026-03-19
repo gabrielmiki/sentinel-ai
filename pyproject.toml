@@ -25,6 +25,7 @@ dependencies = [
     "langchain-anthropic>=0.1.0",
     "langgraph>=0.0.20",
     "prometheus-api-client>=0.5.3",
+    "prometheus-fastapi-instrumentator>=7.0.0",
     "python-jose[cryptography]>=3.3.0",
     "passlib[bcrypt]>=1.7.4",
     "python-multipart>=0.0.9",
@@ -56,7 +57,10 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "A", "C4", "SIM"]
-ignore = ["E501"]
+ignore = [
+    "E501",  # Line too long (handled by formatter)
+    "B008",  # Do not perform function calls in argument defaults (FastAPI Depends pattern)
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

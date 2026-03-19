@@ -26,6 +26,8 @@ class AgentRun(Base):
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     input_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     output_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    current_node: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    completed_nodes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True, default=list)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
         server_default=func.now(), default=lambda: datetime.now(UTC), nullable=False
