@@ -4,7 +4,7 @@ Tests for incidents router endpoints.
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
@@ -26,9 +26,7 @@ class TestCreateIncident:
         assert response.status_code == 201
 
     @pytest.mark.asyncio
-    async def test_create_incident_returns_correct_structure(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_create_incident_returns_correct_structure(self, client: AsyncClient) -> None:
         """Verify create incident returns expected JSON structure."""
         payload = {
             "title": "Database connection pool exhausted",
@@ -109,9 +107,7 @@ class TestCreateIncident:
         assert data["affected_service"] is None
 
     @pytest.mark.asyncio
-    async def test_create_incident_rejects_invalid_severity(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_create_incident_rejects_invalid_severity(self, client: AsyncClient) -> None:
         """Verify endpoint rejects invalid severity values."""
         payload = {
             "title": "Test incident",
@@ -122,9 +118,7 @@ class TestCreateIncident:
         assert response.status_code == 422  # Validation error
 
     @pytest.mark.asyncio
-    async def test_create_incident_rejects_missing_title(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_create_incident_rejects_missing_title(self, client: AsyncClient) -> None:
         """Verify endpoint rejects request without required title field."""
         payload = {
             "severity": "high",
@@ -186,9 +180,7 @@ class TestGetIncidentById:
         assert "updated_at" in data
 
     @pytest.mark.asyncio
-    async def test_get_incident_returns_404_for_nonexistent(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_get_incident_returns_404_for_nonexistent(self, client: AsyncClient) -> None:
         """Verify endpoint returns 404 for non-existent incident ID."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.get(f"/api/v1/incidents/{fake_id}")
@@ -236,9 +228,7 @@ class TestListIncidents:
         assert response.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_list_incidents_returns_correct_structure(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_list_incidents_returns_correct_structure(self, client: AsyncClient) -> None:
         """Verify list incidents returns expected pagination structure."""
         response = await client.get("/api/v1/incidents/")
         data = response.json()
@@ -313,9 +303,7 @@ class TestListIncidents:
         """Verify filtering by status works."""
         # Create incidents with different statuses
         await create_test_incident(title="Open incident", status="open", severity="low")
-        await create_test_incident(
-            title="Resolved incident", status="resolved", severity="low"
-        )
+        await create_test_incident(title="Resolved incident", status="resolved", severity="low")
 
         # Filter by status
         response = await client.get("/api/v1/incidents/?status_filter=open")
@@ -370,9 +358,7 @@ class TestListIncidents:
         assert archived_id not in incident_ids
 
     @pytest.mark.asyncio
-    async def test_list_incidents_empty_when_no_incidents(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_list_incidents_empty_when_no_incidents(self, client: AsyncClient) -> None:
         """Verify endpoint returns empty list when no incidents exist."""
         response = await client.get("/api/v1/incidents/")
         data = response.json()
@@ -464,9 +450,7 @@ class TestUpdateIncident:
         self, client: AsyncClient, create_test_incident, db_session: AsyncSession
     ) -> None:
         """Verify updates are persisted to database."""
-        incident = await create_test_incident(
-            title="Persistence test", severity="critical"
-        )
+        incident = await create_test_incident(title="Persistence test", severity="critical")
 
         payload = {"status": "investigating", "resolution_notes": "Under investigation"}
         await client.patch(f"/api/v1/incidents/{incident.id}", json=payload)
@@ -487,9 +471,7 @@ class TestUpdateIncident:
         assert row[1] == "Under investigation"
 
     @pytest.mark.asyncio
-    async def test_update_incident_returns_404_for_nonexistent(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_update_incident_returns_404_for_nonexistent(self, client: AsyncClient) -> None:
         """Verify endpoint returns 404 for non-existent incident."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         payload = {"status": "resolved"}
@@ -572,9 +554,7 @@ class TestDeleteIncident:
         self, client: AsyncClient, create_test_incident
     ) -> None:
         """Verify archived incident no longer appears in list."""
-        incident = await create_test_incident(
-            title="Will be hidden", severity="high"
-        )
+        incident = await create_test_incident(title="Will be hidden", severity="high")
 
         # Delete incident
         await client.delete(f"/api/v1/incidents/{incident.id}")
@@ -602,9 +582,7 @@ class TestDeleteIncident:
         assert response.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_delete_incident_returns_404_for_nonexistent(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_delete_incident_returns_404_for_nonexistent(self, client: AsyncClient) -> None:
         """Verify endpoint returns 404 for non-existent incident."""
         fake_id = "00000000-0000-0000-0000-000000000000"
         response = await client.delete(f"/api/v1/incidents/{fake_id}")
@@ -638,9 +616,7 @@ class TestDeleteIncident:
         self, client: AsyncClient, create_test_incident
     ) -> None:
         """Verify deleting same incident twice returns 404 on second attempt."""
-        incident = await create_test_incident(
-            title="Idempotency test", severity="low"
-        )
+        incident = await create_test_incident(title="Idempotency test", severity="low")
 
         # First delete succeeds
         response1 = await client.delete(f"/api/v1/incidents/{incident.id}")
@@ -681,9 +657,7 @@ class TestAutoTriggerFromAlertmanager:
         assert response.status_code == 202
 
     @pytest.mark.asyncio
-    async def test_auto_trigger_returns_correct_structure(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_auto_trigger_returns_correct_structure(self, client: AsyncClient) -> None:
         """Verify auto-trigger returns expected response structure."""
         payload = {
             "version": "4",
@@ -760,9 +734,7 @@ class TestAutoTriggerFromAlertmanager:
         assert row[2] == "critical"
 
     @pytest.mark.asyncio
-    async def test_auto_trigger_creates_multiple_incidents(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_auto_trigger_creates_multiple_incidents(self, client: AsyncClient) -> None:
         """Verify multiple incidents created from multiple firing alerts."""
         payload = {
             "version": "4",
@@ -796,9 +768,7 @@ class TestAutoTriggerFromAlertmanager:
         assert len(data["queued_runs"]) == 2
 
     @pytest.mark.asyncio
-    async def test_auto_trigger_ignores_resolved_alerts(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_auto_trigger_ignores_resolved_alerts(self, client: AsyncClient) -> None:
         """Verify resolved alerts are ignored."""
         payload = {
             "version": "4",
@@ -858,9 +828,7 @@ class TestAutoTriggerFromAlertmanager:
         incident_id = data["created_incidents"][0]
 
         # Verify affected_service
-        query = text(
-            "SELECT affected_service FROM sentinel.incidents WHERE id = :id"
-        )
+        query = text("SELECT affected_service FROM sentinel.incidents WHERE id = :id")
         result = await db_session.execute(query, {"id": incident_id})
         row = result.fetchone()
 

@@ -116,6 +116,7 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]]:
     import os
 
     from langchain_openai import OpenAIEmbeddings
+    from pydantic import SecretStr
 
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
@@ -124,7 +125,9 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]]:
             detail="OPENAI_API_KEY not configured",
         )
 
-    embeddings_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=api_key)
+    embeddings_model = OpenAIEmbeddings(
+        model="text-embedding-ada-002", api_key=SecretStr(api_key)
+    )
     vectors = await embeddings_model.aembed_documents(texts)
 
     return vectors

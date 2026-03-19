@@ -88,12 +88,11 @@ async def readiness(
         200 OK: All dependencies healthy
         503 Service Unavailable: One or more dependencies failed
     """
+    import os
     import time
 
     import httpx
     import redis.asyncio as aioredis
-
-    from api.database import REDIS_URL
 
     dependencies: list[DependencyStatus] = []
     overall_healthy = True
@@ -145,10 +144,11 @@ async def readiness(
     # Check Redis
     try:
         start = time.perf_counter()
-        redis_client = aioredis.from_url(REDIS_URL, decode_responses=True)
+        redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+        redis_client = aioredis.from_url(redis_url, decode_responses=True)
         await redis_client.ping()
         latency = (time.perf_counter() - start) * 1000
-        await redis_client.aclose()
+        await redis_client.close()
         dependencies.append(
             DependencyStatus(
                 name="redis",

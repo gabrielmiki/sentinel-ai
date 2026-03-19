@@ -249,6 +249,11 @@ async def trigger_agent_run(
     await db.commit()
 
     row = result.fetchone()
+    if not row:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create agent run",
+        )
 
     # TODO
     # Enqueue Celery task (placeholder - actual implementation in tasks module)
@@ -348,7 +353,7 @@ async def cancel_agent_run(
     result = await db.execute(query)
     await db.commit()
 
-    if result.rowcount == 0:
+    if result.rowcount == 0:  # type: ignore[attr-defined]
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent run {run_id} not found or already completed",
