@@ -125,9 +125,7 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]]:
             detail="OPENAI_API_KEY not configured",
         )
 
-    embeddings_model = OpenAIEmbeddings(
-        model="text-embedding-ada-002", api_key=SecretStr(api_key)
-    )
+    embeddings_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=SecretStr(api_key))
     vectors = await embeddings_model.aembed_documents(texts)
 
     return vectors

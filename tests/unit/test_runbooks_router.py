@@ -2,7 +2,6 @@
 Tests for runbooks router endpoints.
 """
 
-
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import text
@@ -26,9 +25,7 @@ class TestIngestRunbook:
         assert response.status_code == 201
 
     @pytest.mark.asyncio
-    async def test_ingest_runbook_returns_correct_structure(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_ingest_runbook_returns_correct_structure(self, client: AsyncClient) -> None:
         """Verify ingest runbook returns expected JSON structure."""
         markdown_content = b"# Database Incident Runbook\n\nSteps to resolve database issues."
         files = {"file": ("database.md", markdown_content, "text/markdown")}
@@ -251,9 +248,7 @@ class TestDeleteRunbook:
     ) -> None:
         """Verify runbook is removed from database after deletion."""
         # Create runbook first
-        runbook_id = await self._create_runbook(
-            db_session, "Database Runbook", "DB Content"
-        )
+        runbook_id = await self._create_runbook(db_session, "Database Runbook", "DB Content")
 
         await client.delete(f"/api/v1/runbooks/{runbook_id}")
 
@@ -265,9 +260,7 @@ class TestDeleteRunbook:
         assert row is None
 
     @pytest.mark.asyncio
-    async def test_delete_runbook_returns_404_when_not_found(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_delete_runbook_returns_404_when_not_found(self, client: AsyncClient) -> None:
         """Verify 404 is returned when runbook doesn't exist."""
         nonexistent_id = "00000000-0000-0000-0000-000000000000"
 
@@ -332,9 +325,7 @@ class TestSearchRunbooks:
         assert response.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_search_runbooks_returns_correct_structure(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_search_runbooks_returns_correct_structure(self, client: AsyncClient) -> None:
         """Verify search runbooks returns expected JSON structure."""
         payload = {"query": "network troubleshooting", "k": 3}
 
@@ -348,9 +339,7 @@ class TestSearchRunbooks:
         assert isinstance(data["results"], list)
 
     @pytest.mark.asyncio
-    async def test_search_runbooks_returns_query_in_response(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_search_runbooks_returns_query_in_response(self, client: AsyncClient) -> None:
         """Verify search response includes the original query."""
         query_text = "kubernetes deployment failure"
         payload = {"query": query_text, "k": 5}
@@ -361,9 +350,7 @@ class TestSearchRunbooks:
         assert data["query"] == query_text
 
     @pytest.mark.asyncio
-    async def test_search_runbooks_result_has_required_fields(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_search_runbooks_result_has_required_fields(self, client: AsyncClient) -> None:
         """Verify each search result has expected fields."""
         payload = {"query": "test query", "k": 5}
 
@@ -379,9 +366,7 @@ class TestSearchRunbooks:
             assert "metadata" in result
 
     @pytest.mark.asyncio
-    async def test_search_runbooks_respects_k_parameter(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_search_runbooks_respects_k_parameter(self, client: AsyncClient) -> None:
         """Verify search respects the k (limit) parameter."""
         payload = {"query": "api error handling", "k": 2}
 
@@ -392,9 +377,7 @@ class TestSearchRunbooks:
         assert len(data["results"]) <= 2
 
     @pytest.mark.asyncio
-    async def test_search_runbooks_returns_400_for_missing_query(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_search_runbooks_returns_400_for_missing_query(self, client: AsyncClient) -> None:
         """Verify 400 is returned when query is missing."""
         payload = {"k": 5}  # Missing query field
 
@@ -402,9 +385,7 @@ class TestSearchRunbooks:
         assert response.status_code == 422  # FastAPI validation error
 
     @pytest.mark.asyncio
-    async def test_search_runbooks_returns_400_for_empty_query(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_search_runbooks_returns_400_for_empty_query(self, client: AsyncClient) -> None:
         """Verify 400 is returned when query is empty."""
         payload = {"query": "", "k": 5}
 

@@ -29,9 +29,7 @@ class TestTriggerAgentRun:
     ) -> None:
         """Verify trigger agent run returns expected JSON structure."""
         # Create incident first
-        incident_id = await self._create_incident(
-            db_session, "Database down", "critical"
-        )
+        incident_id = await self._create_incident(db_session, "Database down", "critical")
 
         response = await client.post(f"/api/v1/agents/run/{incident_id}")
         data = response.json()
@@ -55,9 +53,7 @@ class TestTriggerAgentRun:
     ) -> None:
         """Verify agent run is created in database."""
         # Create incident first
-        incident_id = await self._create_incident(
-            db_session, "High memory usage", "high"
-        )
+        incident_id = await self._create_incident(db_session, "High memory usage", "high")
 
         response = await client.post(f"/api/v1/agents/run/{incident_id}")
         data = response.json()
@@ -242,9 +238,7 @@ class TestGetAgentRun:
         assert data["current_node"] == "analyze_metrics"
 
     @pytest.mark.asyncio
-    async def test_get_agent_run_returns_404_when_run_not_found(
-        self, client: AsyncClient
-    ) -> None:
+    async def test_get_agent_run_returns_404_when_run_not_found(self, client: AsyncClient) -> None:
         """Verify 404 is returned when agent run doesn't exist."""
         nonexistent_id = "00000000-0000-0000-0000-000000000000"
 
