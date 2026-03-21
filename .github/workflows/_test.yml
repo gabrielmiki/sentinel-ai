@@ -75,7 +75,7 @@ jobs:
           CELERY_RESULT_BACKEND: redis://localhost:6379/2
           JWT_SECRET_KEY: test-secret-key-for-ci
           OPENAI_API_KEY: sk-test-key
-        run: uv run pytest
+        run: uv run pytest -m "" --override-ini="addopts=--cov=api --cov=ingestion --cov-report=term-missing --cov-report=xml --cov-report=html --cov-fail-under=80 --tb=short"
 
       - name: Upload coverage HTML report
         uses: actions/upload-artifact@v4
