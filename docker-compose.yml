@@ -142,6 +142,8 @@ services:
 
   postgres:
     image: postgres:16.2-alpine
+    ports:
+      - "15432:5432"
     environment:
       - POSTGRES_USER=sentinel
       - POSTGRES_DB=sentinelai
@@ -174,6 +176,8 @@ services:
 
   vectordb:
     image: pgvector/pgvector:pg16
+    ports:
+      - "15433:5432"
     environment:
       - POSTGRES_USER=vectoradmin
       - POSTGRES_DB=vectordb

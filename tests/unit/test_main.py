@@ -2,7 +2,9 @@
 Tests for FastAPI application endpoints (api/main.py).
 """
 
+import pytest
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 
 
 class TestHealthEndpoint:
@@ -38,3 +40,19 @@ class TestRootEndpoint:
         assert data["message"] == "SentinelAI API"
         assert data["version"] == "0.1.0"
         assert data["status"] == "running"
+
+
+class TestApplicationLifespan:
+    """Test application lifespan events (startup/shutdown)."""
+
+    @pytest.mark.asyncio
+    async def test_lifespan_startup_and_shutdown(self) -> None:
+        """Verify lifespan context manager executes startup and shutdown correctly."""
+        from api.main import app
+
+        # Create client which triggers lifespan startup
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            # App should be running, test a simple endpoint
+            response = await client.get("/health")
+            assert response.status_code == 200
+        # Lifespan shutdown should execute when client closes

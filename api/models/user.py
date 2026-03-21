@@ -2,7 +2,7 @@
 User model for authentication and authorization.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import Boolean, String, func, text
@@ -28,12 +28,12 @@ class User(Base):
         Boolean, server_default=text("false"), default=False, nullable=False
     )
     created_at: Mapped[datetime] = mapped_column(
-        server_default=func.now(), default=lambda: datetime.now(UTC), nullable=False
+        server_default=func.now(), default=datetime.now, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
+        default=datetime.now,
+        onupdate=datetime.now,
         nullable=False,
     )
 

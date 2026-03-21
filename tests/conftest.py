@@ -8,7 +8,6 @@ Provides fixtures for:
 - Sample data factories
 """
 
-import asyncio
 import os
 from collections.abc import AsyncGenerator, Generator
 from typing import Any
@@ -25,42 +24,34 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, create_async_engin
 # Environment variables for test databases
 TEST_DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+asyncpg://sentinel:sentinel@localhost:5432/sentinel_test",
+    "postgresql+asyncpg://sentinel:sentinel@localhost:15432/sentinel_test",
 )
 TEST_VECTORDB_URL = os.getenv(
     "VECTORDB_URL",
-    "postgresql+asyncpg://vectoradmin:vectorpass@localhost:5433/vectordb_test",
+    "postgresql+asyncpg://vectoradmin:vectorpass@localhost:15433/vectordb_test",
 )
 TEST_REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
 
-# ==================== Event Loop Fixture ====================
-
-
-@pytest.fixture(scope="session")
-def event_loop() -> Generator[asyncio.AbstractEventLoop, None, None]:
-    """
-    Session-scoped event loop for session-scoped async fixtures.
-
-    Required to prevent "got Future attached to a different loop" errors
-    when using session-scoped async fixtures (db_engine, vectordb_engine).
-    """
-    policy = asyncio.get_event_loop_policy()
-    loop = policy.new_event_loop()
-    asyncio.set_event_loop(loop)  # Register as current loop
-    yield loop
-    loop.close()
+# ==================== Event Loop Management ====================
+# Note: pytest-asyncio 1.3.0 with asyncio_mode="auto" and
+# asyncio_default_fixture_loop_scope="session" handles event loop automatically.
+# No custom event_loop fixture needed - the framework manages lifecycle correctly.
 
 
 # ==================== Database Fixtures ====================
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
     """
     Create async engine for test database (application data).
 
     Scope: session - reuse engine across all tests for performance.
+    Loop scope: session - explicitly bind to session-scoped event loop.
+
+    Schema initialization (CREATE EXTENSION, CREATE SCHEMA, CREATE TABLE) runs
+    once per test session, not per test. This is the correct architecture.
 
     Raises:
         RuntimeError: If database extensions or schema creation fails
@@ -100,16 +91,23 @@ async def db_engine() -> AsyncGenerator[AsyncEngine, None]:
 
     yield engine
 
-    # Cleanup
+    # Cleanup: Explicitly dispose of engine to close all pooled connections.
+    # Session-scoped fixtures with aligned loop scopes ensure the event loop is
+    # still active during teardown, so async disposal works correctly.
+    # All function-scoped sessions have completed and returned connections to pool.
     await engine.dispose()
 
 
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def vectordb_engine() -> AsyncGenerator[AsyncEngine, None]:
     """
     Create async engine for vector database (embeddings).
 
     Scope: session - reuse engine across all tests for performance.
+    Loop scope: session - explicitly bind to session-scoped event loop.
+
+    Schema initialization (CREATE EXTENSION, CREATE SCHEMA, CREATE TABLE) runs
+    once per test session, not per test. This is the correct architecture.
 
     Raises:
         RuntimeError: If pgvector extension or schema creation fails
@@ -152,7 +150,10 @@ async def vectordb_engine() -> AsyncGenerator[AsyncEngine, None]:
 
     yield engine
 
-    # Cleanup
+    # Cleanup: Explicitly dispose of engine to close all pooled connections.
+    # Session-scoped fixtures with aligned loop scopes ensure the event loop is
+    # still active during teardown, so async disposal works correctly.
+    # All function-scoped sessions have completed and returned connections to pool.
     await engine.dispose()
 
 
@@ -161,21 +162,19 @@ async def db_session(db_engine: AsyncEngine) -> AsyncGenerator[AsyncSession, Non
     """
     Create a new database session for each test with automatic rollback.
 
-    Ensures test isolation by rolling back all changes after each test.
+    Uses SQLAlchemy 2.0 external transaction pattern to ensure test isolation:
+    - Binds session to an external connection-level transaction
+    - Any session.commit() only releases a SAVEPOINT, not the outer transaction
+    - Explicit rollback at teardown undoes all changes
     """
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-
-    async_session_maker = async_sessionmaker(
-        db_engine,
-        expire_on_commit=False,
-        autocommit=False,
-        autoflush=False,
-    )
-
-    async with async_session_maker() as session:  # noqa: SIM117
-        async with session.begin():
-            yield session
-            # Transaction is automatically rolled back on exit (not committed)
+    async with db_engine.connect() as conn, conn.begin() as transaction:
+        session = AsyncSession(
+            bind=conn,
+            join_transaction_mode="create_savepoint",
+            expire_on_commit=False,
+        )
+        yield session
+        await transaction.rollback()  # Explicit rollback of outer transaction
 
 
 @pytest_asyncio.fixture
@@ -185,21 +184,19 @@ async def vectordb_session(
     """
     Create a new vector database session for each test with automatic rollback.
 
-    Ensures test isolation for embedding operations.
+    Uses SQLAlchemy 2.0 external transaction pattern to ensure test isolation:
+    - Binds session to an external connection-level transaction
+    - Any session.commit() only releases a SAVEPOINT, not the outer transaction
+    - Explicit rollback at teardown undoes all changes
     """
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-
-    async_session_maker = async_sessionmaker(
-        vectordb_engine,
-        expire_on_commit=False,
-        autocommit=False,
-        autoflush=False,
-    )
-
-    async with async_session_maker() as session:  # noqa: SIM117
-        async with session.begin():
-            yield session
-            # Transaction is automatically rolled back on exit (not committed)
+    async with vectordb_engine.connect() as conn, conn.begin() as transaction:
+        session = AsyncSession(
+            bind=conn,
+            join_transaction_mode="create_savepoint",
+            expire_on_commit=False,
+        )
+        yield session
+        await transaction.rollback()  # Explicit rollback of outer transaction
 
 
 # ==================== FastAPI TestClient Fixtures ====================
@@ -224,15 +221,20 @@ def sync_client() -> Generator[TestClient, None, None]:
 
 
 @pytest_asyncio.fixture
-async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
+async def client(
+    db_session: AsyncSession,
+    vectordb_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> AsyncGenerator[AsyncClient, None]:
     """
     Asynchronous HTTP client for FastAPI application with test database injection.
 
     Features:
     - ASGITransport for proper async endpoint support
-    - Automatic database session override (uses test db_session)
-    - Default Content-Type: application/json header
+    - Automatic database session overrides (uses test db_session and vectordb_session)
     - Guaranteed cleanup via dependency_overrides.clear()
+    - Mocked Redis for health checks
+    - Mocked OpenAI embeddings for runbooks
 
     Use for testing async endpoints, SSE streams, database operations, and WebSockets.
 
@@ -248,7 +250,7 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     try:
         from httpx import ASGITransport
 
-        from api.database import get_db
+        from api.database import get_db, get_vectordb
         from api.main import app
     except ImportError as e:
         raise ImportError(
@@ -258,15 +260,39 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
             f"Original error: {e}"
         ) from e
 
-    # Override database dependency to use test session
+    # Mock Redis for health checks (Redis not exposed on host in test environment)
+    from unittest.mock import AsyncMock
+
+    import redis.asyncio as aioredis
+
+    mock_redis = AsyncMock()
+    mock_redis.ping = AsyncMock(return_value=b"PONG")
+    mock_redis.close = AsyncMock()
+
+    def mock_from_url(*args: Any, **kwargs: Any) -> AsyncMock:
+        return mock_redis
+
+    monkeypatch.setattr(aioredis, "from_url", mock_from_url)
+
+    # Mock OpenAI embeddings for runbooks (avoid API calls in tests)
+    async def mock_generate_embeddings(texts: list[str]) -> list[list[float]]:
+        """Return deterministic 1536-dimensional embeddings for testing."""
+        return [[0.1 + (i * 0.01)] * 1536 for i in range(len(texts))]
+
+    import api.routers.runbooks
+
+    monkeypatch.setattr(api.routers.runbooks, "generate_embeddings", mock_generate_embeddings)
+
+    # Override database dependencies to use test sessions
     app.dependency_overrides[get_db] = lambda: db_session
+    app.dependency_overrides[get_vectordb] = lambda: vectordb_session
 
     try:
         # Create async client with ASGI transport for proper async support
+        # Note: No default Content-Type header to allow file uploads (multipart/form-data)
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
-            headers={"Content-Type": "application/json"},
         ) as async_client:
             yield async_client
     finally:
@@ -593,22 +619,20 @@ def create_test_user(db_session: AsyncSession) -> Any:
     """
 
     async def _create_user(**kwargs: Any) -> Any:
-        from passlib.context import CryptContext
+        import bcrypt
 
-        pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
-        # Get password and ensure it's within bcrypt's 72-byte limit
+        # Get password and truncate to bcrypt's 72-byte limit
         password = kwargs.get("password", "testpass123")
-        password_bytes = password.encode("utf-8")
-        if len(password_bytes) > 72:
-            # Truncate at byte level, not character level
-            password = password_bytes[:72].decode("utf-8", errors="ignore")
+        password_bytes = password.encode("utf-8")[:72]  # Truncate at byte level
+
+        # Hash password using bcrypt directly
+        hashed = bcrypt.hashpw(password_bytes, bcrypt.gensalt())
 
         user_data = {
             "id": str(uuid4()),
             "username": kwargs.get("username", f"user_{uuid4().hex[:8]}"),
             "email": kwargs.get("email", f"user_{uuid4().hex[:8]}@example.com"),
-            "hashed_password": pwd_context.hash(password),
+            "hashed_password": hashed.decode("utf-8"),  # Store as string in database
             "is_active": kwargs.get("is_active", True),
             "is_superuser": kwargs.get("is_superuser", False),
         }
@@ -657,13 +681,21 @@ def create_test_incident(db_session: AsyncSession) -> Any:
             "severity": kwargs.get("severity", "medium"),
             "status": kwargs.get("status", "open"),
             "created_by": kwargs.get("created_by"),
+            "affected_service": kwargs.get("affected_service"),
+            "assignee": kwargs.get("assignee"),
+            "resolution_notes": kwargs.get("resolution_notes"),
+            "agent_report": kwargs.get("agent_report"),
         }
 
         query = text(
             """
-            INSERT INTO sentinel.incidents (id, title, description, severity, status, created_by)
-            VALUES (:id, :title, :description, :severity, :status, :created_by)
-            RETURNING id, title, description, severity, status
+            INSERT INTO sentinel.incidents
+            (id, title, description, severity, status, created_by,
+             affected_service, assignee, resolution_notes, agent_report)
+            VALUES (:id, :title, :description, :severity, :status, :created_by,
+                    :affected_service, :assignee, :resolution_notes, :agent_report)
+            RETURNING id, title, description, severity, status,
+                      affected_service, assignee, resolution_notes, agent_report
             """
         )
 

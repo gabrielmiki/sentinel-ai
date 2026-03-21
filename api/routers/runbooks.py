@@ -4,6 +4,8 @@ Runbooks management router.
 Handles runbook ingestion, chunking, embedding, and RAG search.
 """
 
+import json
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -37,7 +39,7 @@ class RunbookListItem(BaseModel):
     tags: list[str] | None
     chunk_count: int | None
     source_filename: str | None
-    created_at: str
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
@@ -236,8 +238,10 @@ async def ingest_runbook(
                 "id": str(uuid4()),
                 "runbook_id": runbook_id,
                 "content": chunk,
-                "embedding": vector,
-                "meta": {"chunk_index": i, "source_file": file.filename},
+                "embedding": str(vector),  # Convert list to string for pgvector
+                "meta": json.dumps(
+                    {"chunk_index": i, "source_file": file.filename}
+                ),  # Convert dict to JSON string for JSONB
             },
         )
 
@@ -358,16 +362,17 @@ async def search_runbooks(
         ) from e
 
     # Perform vector similarity search
+    # Use CAST to avoid ambiguity with SQLAlchemy parameter binding
     search_query = text(
         """
         SELECT
             runbook_id,
             content,
             meta,
-            1 - (embedding <=> :query_vector::vector) as similarity
+            1 - (embedding <=> CAST(:query_vector AS vector)) as similarity
         FROM embeddings.runbook_embeddings
         WHERE embedding IS NOT NULL
-        ORDER BY embedding <=> :query_vector::vector
+        ORDER BY embedding <=> CAST(:query_vector AS vector)
         LIMIT :k
         """
     )
@@ -375,7 +380,7 @@ async def search_runbooks(
     result = await vectordb.execute(
         search_query,
         {
-            "query_vector": query_vector,
+            "query_vector": str(query_vector),  # Convert list to string for pgvector
             "k": search_request.k,
         },
     )

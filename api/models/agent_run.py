@@ -2,7 +2,7 @@
 AgentRun model for tracking LangGraph execution history.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -30,7 +30,7 @@ class AgentRun(Base):
     completed_nodes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True, default=list)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(
-        server_default=func.now(), default=lambda: datetime.now(UTC), nullable=False
+        server_default=func.now(), default=datetime.now, nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)

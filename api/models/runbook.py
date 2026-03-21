@@ -2,7 +2,7 @@
 Runbook model for storing operational procedures and documentation.
 """
 
-from datetime import UTC, datetime
+from datetime import datetime
 from uuid import uuid4
 
 from sqlalchemy import ARRAY, ForeignKey, String, Text, func
@@ -26,12 +26,12 @@ class Runbook(Base):
     source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_by: Mapped[str | None] = mapped_column(ForeignKey("sentinel.users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        server_default=func.now(), default=lambda: datetime.now(UTC), nullable=False
+        server_default=func.now(), default=datetime.now, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
         server_default=func.now(),
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
+        default=datetime.now,
+        onupdate=datetime.now,
         nullable=False,
     )
 

@@ -173,7 +173,7 @@ class TestListRunbooks:
         self, client: AsyncClient, db_session: AsyncSession
     ) -> None:
         """Verify runbooks are ordered by created_at descending."""
-        # Create multiple runbooks
+        # Create multiple runbooks (using clock_timestamp() for distinct timestamps)
         await self._create_runbook(db_session, "First Runbook", "Content 1")
         await self._create_runbook(db_session, "Second Runbook", "Content 2")
         await self._create_runbook(db_session, "Third Runbook", "Content 3")
@@ -204,11 +204,12 @@ class TestListRunbooks:
         chunk_count: int = 1,
     ) -> str:
         """Create a runbook and return its ID."""
+        # Use clock_timestamp() instead of default now() to get distinct timestamps
         query = text(
             """
             INSERT INTO sentinel.runbooks
-            (id, title, content, chunk_count)
-            VALUES (gen_random_uuid(), :title, :content, :chunk_count)
+            (id, title, content, chunk_count, created_at)
+            VALUES (gen_random_uuid(), :title, :content, :chunk_count, clock_timestamp())
             RETURNING id
             """
         )
@@ -289,11 +290,12 @@ class TestDeleteRunbook:
         chunk_count: int = 1,
     ) -> str:
         """Create a runbook and return its ID."""
+        # Use clock_timestamp() instead of default now() to get distinct timestamps
         query = text(
             """
             INSERT INTO sentinel.runbooks
-            (id, title, content, chunk_count)
-            VALUES (gen_random_uuid(), :title, :content, :chunk_count)
+            (id, title, content, chunk_count, created_at)
+            VALUES (gen_random_uuid(), :title, :content, :chunk_count, clock_timestamp())
             RETURNING id
             """
         )

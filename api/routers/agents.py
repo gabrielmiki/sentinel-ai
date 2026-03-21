@@ -5,6 +5,7 @@ Manages LangGraph agent runs: triggering, monitoring, streaming, and cancellatio
 """
 
 import asyncio
+import json
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
@@ -243,7 +244,7 @@ async def trigger_agent_run(
         {
             "id": run_id,
             "incident_id": incident_id,
-            "input_data": input_data,
+            "input_data": json.dumps(input_data),
         },
     )
     await db.commit()
@@ -346,7 +347,7 @@ async def cancel_agent_run(
         .where(AgentRun.status.in_(["pending", "running"]))
         .values(
             status="cancelled",
-            completed_at=datetime.now(UTC),
+            completed_at=datetime.now(),
         )
     )
 

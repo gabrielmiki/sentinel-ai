@@ -89,10 +89,12 @@ class TestFastAPIFixtures:
 
     @pytest.mark.asyncio
     @pytest.mark.database
-    async def test_async_client_has_json_header(self, client: AsyncClient) -> None:
-        """Verify async client has default Content-Type header."""
-        # The client fixture sets Content-Type: application/json by default
-        assert client.headers.get("Content-Type") == "application/json"
+    async def test_async_client_has_no_default_content_type(self, client: AsyncClient) -> None:
+        """Verify async client has no default Content-Type to support multiple formats."""
+        # The client fixture does not set a default Content-Type header
+        # This allows endpoints to accept both JSON (application/json) and
+        # file uploads (multipart/form-data) without header conflicts
+        assert "Content-Type" not in client.headers or client.headers.get("Content-Type") is None
 
     @pytest.mark.asyncio
     @pytest.mark.database
