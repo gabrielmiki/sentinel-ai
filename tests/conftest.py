@@ -691,9 +691,9 @@ def create_test_incident(db_session: AsyncSession) -> Any:
             """
             INSERT INTO sentinel.incidents
             (id, title, description, severity, status, created_by,
-             affected_service, assignee, resolution_notes, agent_report)
+             affected_service, assignee, resolution_notes, agent_report, created_at)
             VALUES (:id, :title, :description, :severity, :status, :created_by,
-                    :affected_service, :assignee, :resolution_notes, :agent_report)
+                    :affected_service, :assignee, :resolution_notes, :agent_report, clock_timestamp())
             RETURNING id, title, description, severity, status,
                       affected_service, assignee, resolution_notes, agent_report
             """
