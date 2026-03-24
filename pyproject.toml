@@ -91,7 +91,6 @@ omit = [
     "tests/*",
     "**/__init__.py",
     "api/models/*.py",
-    "api/routers/runbooks.py",  # TODO: Add OpenAI mocking for runbooks tests
     "api/tasks/celery_app.py",  # TODO: Add Celery task tests
 ]
 
