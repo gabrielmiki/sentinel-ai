@@ -145,9 +145,7 @@ class TestPrometheusQuery:
     async def test_query_network_error(self) -> None:
         """Verify query raises ToolExecutionError on network failure."""
         with patch("httpx.AsyncClient") as mock_client:
-            mock_get = AsyncMock(
-                side_effect=httpx.ConnectError("Connection refused")
-            )
+            mock_get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
             with pytest.raises(ToolExecutionError) as exc_info:
@@ -289,9 +287,7 @@ class TestPrometheusModels:
             "status": "success",
             "data": {
                 "resultType": "vector",
-                "result": [
-                    {"metric": {"job": "test"}, "value": [123.45, "99"]}
-                ],
+                "result": [{"metric": {"job": "test"}, "value": [123.45, "99"]}],
             },
         }
 

@@ -1081,6 +1081,116 @@ After establishing database test infrastructure, resolved 4 categories of test f
 - **Explicit is better than implicit** - Direct `bcrypt.hashpw()` with explicit truncation is clearer than passlib's "magic" context manager
 - **Test infrastructure pays dividends** - 4 systematic fixes unblocked 83 tests (20 minutes of fixes → 8 hours of test coverage)
 
+### Docker Image Staleness - Missing Dependencies in Running Containers (2026-03-24)
+After adding new dependencies to `pyproject.toml`, Docker infrastructure failed to start with bad gateway errors due to stale container images.
+
+#### Problem Discovery
+User attempted to connect to Docker infrastructure after starting it with `docker compose up -d`:
+- **HTTPS (port 443)**: Connection refused (expected - no SSL certificates configured)
+- **HTTP (port 80)**: 502 Bad Gateway from nginx
+
+Root cause investigation revealed:
+```bash
+$ docker compose ps
+NAME                    STATUS
+sentinel-ai-backend-1   exited (1)
+sentinel-ai-backend-2   exited (1)
+sentinel-ai-backend-3   exited (1)
+sentinel-ai-nginx-1     running
+```
+
+All three backend replicas failed to start.
+
+#### Root Cause Analysis
+
+**Backend logs showed ModuleNotFoundError:**
+```
+ModuleNotFoundError: No module named 'prometheus_fastapi_instrumentator'
+```
+
+**Timeline of events:**
+1. `prometheus-fastapi-instrumentator` dependency was added to `pyproject.toml` during CI pipeline implementation (2026-03-11)
+2. Docker images were built **before** this dependency was added
+3. Running `docker compose up -d` used existing (stale) images from Docker's cache
+4. Backend containers tried to import the new module but it wasn't installed in the image
+5. All backend services crashed on startup, causing nginx to return 502 Bad Gateway
+
+**Why Docker didn't automatically rebuild:**
+- `docker compose up -d` only recreates containers if the **compose file** changes
+- It does NOT rebuild images when source code or dependencies change
+- Images must be explicitly rebuilt with `docker compose build`
+
+#### Solution
+
+**Step 1: Rebuild Docker images**
+```bash
+docker compose build backend celery-worker
+```
+
+Result: Successfully built both images with all 95 packages including `prometheus-fastapi-instrumentator==7.1.0`
+
+**Step 2: Recreate containers with new images**
+```bash
+docker compose up -d --force-recreate backend
+```
+
+Result: All 3 backend replicas started successfully:
+```
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000
+INFO:     127.0.0.1:57380 - "GET /health HTTP/1.1" 200 OK
+INFO:     10.0.8.2:52872 - "GET /metrics HTTP/1.1" 200 OK
+```
+
+**Step 3: Verify connectivity**
+```bash
+$ curl http://localhost/health
+{"status":"healthy","service":"sentinel-ai"}
+```
+
+✅ Bad gateway error resolved. Nginx successfully proxying to healthy backends.
+
+#### Prevention Strategies
+
+**When to rebuild Docker images:**
+- After adding/removing dependencies in `pyproject.toml`
+- After updating `uv.lock` (e.g., `uv sync --upgrade-package`)
+- After modifying Dockerfile or Dockerfile.celery
+- After changing system dependencies (apt packages, etc.)
+
+**Recommended workflow:**
+```bash
+# After dependency changes
+docker compose build backend celery-worker
+
+# Recreate containers with new images
+docker compose up -d --force-recreate backend
+
+# Verify services are healthy
+docker compose ps backend
+docker compose logs backend --tail=20
+```
+
+**Alternative: Always rebuild on startup (slower but safer)**
+```bash
+docker compose up -d --build
+```
+
+This rebuilds images before starting containers, ensuring they're always up-to-date but takes longer.
+
+#### Key Lessons Learned
+
+- **Docker doesn't auto-rebuild images** - `docker compose up -d` reuses existing images even when dependencies change
+- **Image staleness causes runtime errors** - Missing imports fail at container startup, not build time
+- **502 Bad Gateway is often upstream failure** - Check backend logs before debugging nginx
+- **Explicit rebuilds required** - After any dependency changes, run `docker compose build` before `docker compose up`
+- **Development workflow discipline** - Establish habits to rebuild after pulling code with dependency changes
+
+#### Files Not Modified
+No files were changed to fix this issue. The problem was operational, not code-related. The fix was entirely in Docker image management:
+1. Rebuild images with current dependencies
+2. Recreate containers with updated images
+
 ## Post-Implementation Checklist
 - [x] CI pipeline implemented (Ruff → pip-audit → Bandit/Semgrep → pytest)
 - [x] Green CI - Style stage (Ruff linting + formatting + MyPy type checking)

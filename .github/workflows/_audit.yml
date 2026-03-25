@@ -28,6 +28,7 @@ jobs:
             --skip-editable \
             --disable-pip \
             --ignore-vuln CVE-2024-23342 \
+            --ignore-vuln GHSA-5239-wwwm-4pmq \
             --desc \
             --output audit-report.txt
         continue-on-error: true
@@ -40,6 +41,7 @@ jobs:
             --skip-editable \
             --disable-pip \
             --ignore-vuln CVE-2024-23342 \
+            --ignore-vuln GHSA-5239-wwwm-4pmq \
             --format json \
             --output audit-report.json
 

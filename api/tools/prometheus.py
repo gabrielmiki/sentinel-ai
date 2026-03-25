@@ -34,9 +34,7 @@ class PrometheusResultItem(BaseModel):
     metric: dict[str, str] = Field(
         default_factory=dict, description="Metric labels as key-value pairs"
     )
-    value: tuple[float, str] = Field(
-        description="Timestamp and value as [timestamp, value_string]"
-    )
+    value: tuple[float, str] = Field(description="Timestamp and value as [timestamp, value_string]")
 
 
 class PrometheusData(BaseModel):
@@ -111,9 +109,7 @@ async def query(
             if result.status != "success":
                 error_msg = result.error or "Unknown error"
                 error_type = result.error_type or "unknown"
-                raise ToolExecutionError(
-                    f"Prometheus query failed ({error_type}): {error_msg}"
-                )
+                raise ToolExecutionError(f"Prometheus query failed ({error_type}): {error_msg}")
 
             return result
 
@@ -174,15 +170,11 @@ async def query_range(
             if result.status != "success":
                 error_msg = result.error or "Unknown error"
                 error_type = result.error_type or "unknown"
-                raise ToolExecutionError(
-                    f"Prometheus query failed ({error_type}): {error_msg}"
-                )
+                raise ToolExecutionError(f"Prometheus query failed ({error_type}): {error_msg}")
 
             return result
 
     except httpx.TimeoutException as e:
-        raise ToolExecutionError(
-            f"Prometheus range query timeout after {timeout}s"
-        ) from e
+        raise ToolExecutionError(f"Prometheus range query timeout after {timeout}s") from e
     except httpx.HTTPError as e:
         raise ToolExecutionError(f"Prometheus HTTP request failed: {e}") from e
