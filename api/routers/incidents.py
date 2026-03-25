@@ -228,8 +228,10 @@ async def list_incidents(
     # Apply cursor pagination
     if cursor:
         try:
+            from datetime import datetime
+
             cursor_data = json.loads(base64.b64decode(cursor).decode("utf-8"))
-            cursor_created_at = cursor_data["created_at"]
+            cursor_created_at = datetime.fromisoformat(cursor_data["created_at"])
             cursor_id = cursor_data["id"]
             # For descending order: next page has (created_at < cursor) OR (created_at = cursor AND id > cursor_id)
             query = query.where(
