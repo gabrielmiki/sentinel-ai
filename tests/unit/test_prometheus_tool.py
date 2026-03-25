@@ -14,8 +14,8 @@ from api.tools.prometheus import (
     PrometheusData,
     PrometheusResult,
     ToolExecutionError,
-    query,
-    query_range,
+    _query_prometheus,
+    _query_range_prometheus,
 )
 
 
@@ -44,7 +44,7 @@ class TestPrometheusQuery:
             )
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
-            result = await query("up{job='api'}")
+            result = await _query_prometheus("up{job='api'}")
 
             assert result.status == "success"
             assert result.data is not None
@@ -67,7 +67,7 @@ class TestPrometheusQuery:
             )
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
-            await query("up", time="2024-03-24T10:00:00Z")
+            await _query_prometheus("up", time="2024-03-24T10:00:00Z")
 
             # Verify time parameter was passed
             call_kwargs = mock_get.call_args.kwargs
@@ -87,7 +87,7 @@ class TestPrometheusQuery:
             )
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
-            result = await query("nonexistent_metric")
+            result = await _query_prometheus("nonexistent_metric")
 
             assert result.status == "success"
             assert result.data is not None
@@ -101,7 +101,7 @@ class TestPrometheusQuery:
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
             with pytest.raises(ToolExecutionError) as exc_info:
-                await query("up", timeout=5.0)
+                await _query_prometheus("up", timeout=5.0)
 
             assert "timeout after 5.0s" in str(exc_info.value).lower()
 
@@ -115,7 +115,7 @@ class TestPrometheusQuery:
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
             with pytest.raises(ToolExecutionError) as exc_info:
-                await query("up")
+                await _query_prometheus("up")
 
             assert "503" in str(exc_info.value)
             assert "Service Unavailable" in str(exc_info.value)
@@ -136,7 +136,7 @@ class TestPrometheusQuery:
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
             with pytest.raises(ToolExecutionError) as exc_info:
-                await query("invalid{")
+                await _query_prometheus("invalid{")
 
             assert "bad_data" in str(exc_info.value)
             assert "invalid PromQL syntax" in str(exc_info.value)
@@ -149,7 +149,7 @@ class TestPrometheusQuery:
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
             with pytest.raises(ToolExecutionError) as exc_info:
-                await query("up")
+                await _query_prometheus("up")
 
             assert "HTTP request failed" in str(exc_info.value)
 
@@ -168,7 +168,7 @@ class TestPrometheusQuery:
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
             with patch.dict("os.environ", {"PROMETHEUS_URL": "http://custom:9090"}):
-                await query("up")
+                await _query_prometheus("up")
 
             # Verify custom URL was used
             call_args = mock_get.call_args.args
@@ -200,7 +200,7 @@ class TestPrometheusQueryRange:
             )
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
-            result = await query_range(
+            result = await _query_range_prometheus(
                 "rate(http_requests_total[5m])",
                 start="2024-03-24T10:00:00Z",
                 end="2024-03-24T11:00:00Z",
@@ -224,7 +224,7 @@ class TestPrometheusQueryRange:
             )
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
-            await query_range(
+            await _query_range_prometheus(
                 "up",
                 start="2024-03-24T10:00:00Z",
                 end="2024-03-24T11:00:00Z",
@@ -243,7 +243,7 @@ class TestPrometheusQueryRange:
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
             with pytest.raises(ToolExecutionError) as exc_info:
-                await query_range(
+                await _query_range_prometheus(
                     "up",
                     start="2024-03-24T10:00:00Z",
                     end="2024-03-24T11:00:00Z",
@@ -268,7 +268,7 @@ class TestPrometheusQueryRange:
             mock_client.return_value.__aenter__.return_value.get = mock_get
 
             with pytest.raises(ToolExecutionError) as exc_info:
-                await query_range(
+                await _query_range_prometheus(
                     "rate(metric[1h])",
                     start="2024-03-24T10:00:00Z",
                     end="2024-03-24T11:00:00Z",

@@ -9,6 +9,7 @@ import os
 from typing import Any
 
 import httpx
+from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 
@@ -65,13 +66,13 @@ class PrometheusResult(BaseModel):
     )
 
 
-async def query(
+async def _query_prometheus(
     promql: str,
     time: str | None = None,
     timeout: float = 10.0,
 ) -> PrometheusResult:
     """
-    Execute an instant Prometheus query.
+    Internal function to execute an instant Prometheus query.
 
     Args:
         promql: PromQL query string
@@ -119,7 +120,7 @@ async def query(
         raise ToolExecutionError(f"Prometheus HTTP request failed: {e}") from e
 
 
-async def query_range(
+async def _query_range_prometheus(
     promql: str,
     start: str,
     end: str,
@@ -127,7 +128,7 @@ async def query_range(
     timeout: float = 30.0,
 ) -> PrometheusResult:
     """
-    Execute a Prometheus range query for time-series data.
+    Internal function to execute a Prometheus range query for time-series data.
 
     Args:
         promql: PromQL query string
@@ -178,3 +179,69 @@ async def query_range(
         raise ToolExecutionError(f"Prometheus range query timeout after {timeout}s") from e
     except httpx.HTTPError as e:
         raise ToolExecutionError(f"Prometheus HTTP request failed: {e}") from e
+
+
+@tool
+async def query(
+    promql: str,
+    time: str | None = None,
+    timeout: float = 10.0,
+) -> PrometheusResult:
+    """
+    Query Prometheus metrics using PromQL.
+
+    This tool queries the Prometheus monitoring system to retrieve current metric values
+    using PromQL (Prometheus Query Language). Useful for checking system health,
+    resource usage, and application metrics during incident investigation.
+
+    Args:
+        promql: PromQL query string (e.g., 'up{job="api"}', 'rate(http_requests_total[5m])')
+        time: Optional RFC3339 or Unix timestamp (defaults to current time)
+        timeout: Request timeout in seconds (default 10.0)
+
+    Returns:
+        PrometheusResult with query response containing metric data
+
+    Raises:
+        ToolExecutionError: On timeout, HTTP error, or Prometheus error
+
+    Examples:
+        - query('up{job="backend"}')
+        - query('rate(http_requests_total[5m])', time="2024-03-24T10:00:00Z")
+    """
+    return await _query_prometheus(promql, time, timeout)
+
+
+@tool
+async def query_range(
+    promql: str,
+    start: str,
+    end: str,
+    step: str = "15s",
+    timeout: float = 30.0,
+) -> PrometheusResult:
+    """
+    Query Prometheus metrics over a time range.
+
+    This tool queries the Prometheus monitoring system to retrieve metric values over
+    a specified time range, returning time-series data. Useful for analyzing trends,
+    identifying patterns, and understanding system behavior over time.
+
+    Args:
+        promql: PromQL query string (e.g., 'rate(http_requests_total[5m])')
+        start: Start time (RFC3339 or Unix timestamp, e.g., "2024-03-24T10:00:00Z")
+        end: End time (RFC3339 or Unix timestamp)
+        step: Query resolution step (e.g., "15s", "1m", "5m", default "15s")
+        timeout: Request timeout in seconds (default 30.0)
+
+    Returns:
+        PrometheusResult with time-series data
+
+    Raises:
+        ToolExecutionError: On timeout, HTTP error, or Prometheus error
+
+    Examples:
+        - query_range('up{job="backend"}', start="2024-03-24T10:00:00Z", end="2024-03-24T11:00:00Z")
+        - query_range('rate(http_requests_total[5m])', start="2024-03-24T10:00:00Z", end="2024-03-24T11:00:00Z", step="1m")
+    """
+    return await _query_range_prometheus(promql, start, end, step, timeout)
