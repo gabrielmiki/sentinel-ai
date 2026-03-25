@@ -13,7 +13,6 @@ import pytest
 from api.tools.prometheus import (
     PrometheusData,
     PrometheusResult,
-    PrometheusResultItem,
     ToolExecutionError,
     query,
     query_range,
@@ -49,7 +48,7 @@ class TestPrometheusQuery:
 
             assert result.status == "success"
             assert result.data is not None
-            assert result.data.resultType == "vector"
+            assert result.data.result_type == "vector"
             assert len(result.data.result) == 1
             assert result.data.result[0].metric["job"] == "api"
             assert result.data.result[0].value[1] == "42.5"
@@ -211,7 +210,7 @@ class TestPrometheusQueryRange:
 
             assert result.status == "success"
             assert result.data is not None
-            assert result.data.resultType == "matrix"
+            assert result.data.result_type == "matrix"
 
     @pytest.mark.asyncio
     async def test_query_range_with_custom_step(self) -> None:
@@ -300,7 +299,7 @@ class TestPrometheusModels:
 
         assert result.status == "success"
         assert result.data is not None
-        assert result.data.resultType == "vector"
+        assert result.data.result_type == "vector"
         assert len(result.data.result) == 1
 
     def test_prometheus_result_with_error(self) -> None:
@@ -314,7 +313,7 @@ class TestPrometheusModels:
         result = PrometheusResult(**data)
 
         assert result.status == "error"
-        assert result.errorType == "bad_data"
+        assert result.error_type == "bad_data"
         assert result.error == "parse error"
         assert result.data is None
 
@@ -324,5 +323,5 @@ class TestPrometheusModels:
 
         prom_data = PrometheusData(**data)
 
-        assert prom_data.resultType == "vector"
+        assert prom_data.result_type == "vector"
         assert prom_data.result == []

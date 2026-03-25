@@ -42,7 +42,11 @@ class PrometheusResultItem(BaseModel):
 class PrometheusData(BaseModel):
     """Data section of Prometheus response."""
 
-    resultType: str = Field(description="Type of result (vector, matrix, scalar, string)")
+    model_config = {"populate_by_name": True}
+
+    result_type: str = Field(
+        alias="resultType", description="Type of result (vector, matrix, scalar, string)"
+    )
     result: list[PrometheusResultItem] = Field(
         default_factory=list, description="List of metric results"
     )
@@ -51,13 +55,15 @@ class PrometheusData(BaseModel):
 class PrometheusResult(BaseModel):
     """Complete Prometheus API response."""
 
+    model_config = {"populate_by_name": True}
+
     status: str = Field(description="Response status (success or error)")
     data: PrometheusData | None = Field(
         default=None, description="Query result data (None if error)"
     )
     error: str | None = Field(default=None, description="Error message if status is error")
-    errorType: str | None = Field(
-        default=None, description="Error type if status is error"
+    error_type: str | None = Field(
+        alias="errorType", default=None, description="Error type if status is error"
     )
 
 
@@ -104,7 +110,7 @@ async def query(
             # Check Prometheus status
             if result.status != "success":
                 error_msg = result.error or "Unknown error"
-                error_type = result.errorType or "unknown"
+                error_type = result.error_type or "unknown"
                 raise ToolExecutionError(
                     f"Prometheus query failed ({error_type}): {error_msg}"
                 )
@@ -167,7 +173,7 @@ async def query_range(
             # Check Prometheus status
             if result.status != "success":
                 error_msg = result.error or "Unknown error"
-                error_type = result.errorType or "unknown"
+                error_type = result.error_type or "unknown"
                 raise ToolExecutionError(
                     f"Prometheus query failed ({error_type}): {error_msg}"
                 )
