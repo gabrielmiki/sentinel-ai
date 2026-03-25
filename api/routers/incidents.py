@@ -192,7 +192,7 @@ async def create_incident(
     summary="List incidents",
 )
 async def list_incidents(
-    cursor: str | None = Query(None, description="Pagination cursor (incident ID)"),
+    cursor: str | None = Query(None, description="Pagination cursor (base64 encoded)"),
     limit: int = Query(50, ge=1, le=100, description="Page size"),
     status_filter: str | None = Query(None, description="Filter by status"),
     severity_filter: str | None = Query(None, description="Filter by severity"),
@@ -202,7 +202,7 @@ async def list_incidents(
     List incidents with cursor-based pagination and optional filters.
 
     Args:
-        cursor: Pagination cursor (last incident ID from previous page)
+        cursor: Pagination cursor (base64 encoded timestamp and ID)
         limit: Number of incidents per page
         status_filter: Filter by status (e.g., 'open', 'resolved')
         severity_filter: Filter by severity (e.g., 'critical', 'high')
@@ -211,6 +211,9 @@ async def list_incidents(
     Returns:
         Paginated incident list with next cursor
     """
+    import base64
+    import json
+
     from api.models.incident import Incident
 
     # Build query with filters
@@ -224,9 +227,20 @@ async def list_incidents(
 
     # Apply cursor pagination
     if cursor:
-        query = query.where(Incident.id > cursor)
+        try:
+            cursor_data = json.loads(base64.b64decode(cursor).decode("utf-8"))
+            cursor_created_at = cursor_data["created_at"]
+            cursor_id = cursor_data["id"]
+            # For descending order: next page has (created_at < cursor) OR (created_at = cursor AND id > cursor_id)
+            query = query.where(
+                (Incident.created_at < cursor_created_at)
+                | ((Incident.created_at == cursor_created_at) & (Incident.id > cursor_id))
+            )
+        except Exception:
+            # Invalid cursor, ignore it
+            pass
 
-    query = query.order_by(Incident.created_at.desc()).limit(limit + 1)
+    query = query.order_by(Incident.created_at.desc(), Incident.id.asc()).limit(limit + 1)
 
     result = await db.execute(query)
     incidents = result.scalars().all()
@@ -236,7 +250,18 @@ async def list_incidents(
     if has_more:
         incidents = incidents[:limit]
 
-    next_cursor = incidents[-1].id if has_more and incidents else None
+    # Generate next cursor from last incident (created_at + id for stable pagination)
+    next_cursor = None
+    if has_more and incidents:
+        import base64
+        import json
+
+        last_incident = incidents[-1]
+        cursor_data = {
+            "created_at": last_incident.created_at.isoformat(),
+            "id": last_incident.id,
+        }
+        next_cursor = base64.b64encode(json.dumps(cursor_data).encode("utf-8")).decode("utf-8")
 
     # Get total count
     count_query = (
