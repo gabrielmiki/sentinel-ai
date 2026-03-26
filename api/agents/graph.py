@@ -6,10 +6,15 @@ supervised by a coordinator, then updates the incident with the final report.
 """
 
 import operator
+import os
 from typing import Annotated, Any, TypedDict
+from unittest.mock import AsyncMock
 
 from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from langgraph.graph import END, START, StateGraph
+from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class GraphState(TypedDict):
@@ -27,44 +32,7 @@ class GraphState(TypedDict):
 
 async def supervisor(state: GraphState) -> dict[str, Any]:
     """Supervisor node - coordinates agent execution."""
-    return {"messages": [HumanMessage(content="supervisor stub called")]}
-
-
-async def metrics_agent(state: GraphState) -> dict[str, Any]:
-    """Metrics agent node - queries Prometheus for metrics."""
-    return {
-        "metrics_data": {"stub": "placeholder metrics data"},
-        "messages": [HumanMessage(content="metrics_agent stub called")],
-    }
-
-
-async def log_agent(state: GraphState) -> dict[str, Any]:
-    """Log agent node - searches Loki for relevant logs."""
-    return {
-        "log_data": ["stub log entry 1", "stub log entry 2"],
-        "messages": [HumanMessage(content="log_agent stub called")],
-    }
-
-
-async def runbook_agent(state: GraphState) -> dict[str, Any]:
-    """Runbook agent node - searches vector DB for relevant runbooks."""
-    return {
-        "runbook_hits": [{"title": "Stub Runbook", "content": "Placeholder runbook content"}],
-        "messages": [HumanMessage(content="runbook_agent stub called")],
-    }
-
-
-async def synthesis_agent(state: GraphState) -> dict[str, Any]:
-    """Synthesis agent node - generates final incident report."""
-    return {
-        "final_report": "Stub final report: All data collected and synthesized",
-        "messages": [HumanMessage(content="synthesis_agent stub called")],
-    }
-
-
-async def incident_agent(state: GraphState) -> dict[str, Any]:
-    """Incident agent node - updates incident with final report."""
-    return {"messages": [HumanMessage(content="incident_agent stub called")]}
+    return {"messages": [HumanMessage(content="Supervisor coordinating agent execution")]}
 
 
 def route_supervisor(state: GraphState) -> str:
@@ -90,7 +58,7 @@ def route_supervisor(state: GraphState) -> str:
         # Check if incident_agent already ran by looking at messages
         messages = state.get("messages", [])
         incident_agent_ran = any(
-            "incident_agent stub called" in str(msg.content) for msg in messages
+            "IncidentAgent updated incident" in str(msg.content) for msg in messages
         )
 
         if incident_agent_ran:
@@ -111,38 +79,118 @@ def route_supervisor(state: GraphState) -> str:
     return END
 
 
-# Build the graph
-workflow = StateGraph(GraphState)
+async def build_graph(session: AsyncSession) -> Any:
+    """
+    Build and compile the LangGraph with Redis checkpointing.
 
-# Add nodes
-workflow.add_node("supervisor", supervisor)
-workflow.add_node("metrics_agent", metrics_agent)
-workflow.add_node("log_agent", log_agent)
-workflow.add_node("runbook_agent", runbook_agent)
-workflow.add_node("synthesis_agent", synthesis_agent)
-workflow.add_node("incident_agent", incident_agent)
+    Args:
+        session: AsyncSession for database operations (injected into incident_agent)
 
-# Add edges
-workflow.add_edge(START, "supervisor")
-workflow.add_conditional_edges(
-    "supervisor",
-    route_supervisor,
-    {
-        "metrics_agent": "metrics_agent",
-        "log_agent": "log_agent",
-        "runbook_agent": "runbook_agent",
-        "synthesis_agent": "synthesis_agent",
-        "incident_agent": "incident_agent",
-        END: END,
-    },
-)
+    Returns:
+        Compiled graph with Redis checkpointer attached
+    """
+    # Import agent implementations (deferred to avoid circular imports)
+    from api.agents.incident_agent import make_incident_agent
+    from api.agents.log_agent import log_agent
+    from api.agents.metrics_agent import metrics_agent
+    from api.agents.runbook_agent import runbook_agent
+    from api.agents.synthesis_agent import synthesis_agent
 
-# All agents return to supervisor for coordination
-workflow.add_edge("metrics_agent", "supervisor")
-workflow.add_edge("log_agent", "supervisor")
-workflow.add_edge("runbook_agent", "supervisor")
-workflow.add_edge("synthesis_agent", "supervisor")
-workflow.add_edge("incident_agent", "supervisor")
+    # Initialize Redis checkpointer
+    redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    checkpointer = AsyncRedisSaver.from_conn_string(redis_url)
 
-# Compile the graph
-graph = workflow.compile()
+    # Create incident_agent with injected session
+    incident_agent_node = make_incident_agent(session)
+
+    # Build the workflow
+    workflow = StateGraph(GraphState)
+
+    # Add nodes
+    workflow.add_node("supervisor", supervisor)
+    workflow.add_node("metrics_agent", metrics_agent)
+    workflow.add_node("log_agent", log_agent)
+    workflow.add_node("runbook_agent", runbook_agent)
+    workflow.add_node("synthesis_agent", synthesis_agent)
+    workflow.add_node("incident_agent", incident_agent_node)  # type: ignore[arg-type]
+
+    # Add edges
+    workflow.add_edge(START, "supervisor")
+    workflow.add_conditional_edges(
+        "supervisor",
+        route_supervisor,
+        {
+            "metrics_agent": "metrics_agent",
+            "log_agent": "log_agent",
+            "runbook_agent": "runbook_agent",
+            "synthesis_agent": "synthesis_agent",
+            "incident_agent": "incident_agent",
+            END: END,
+        },
+    )
+
+    # All agents return to supervisor for coordination
+    workflow.add_edge("metrics_agent", "supervisor")
+    workflow.add_edge("log_agent", "supervisor")
+    workflow.add_edge("runbook_agent", "supervisor")
+    workflow.add_edge("synthesis_agent", "supervisor")
+    workflow.add_edge("incident_agent", "supervisor")
+
+    # Compile with Redis checkpointer
+    return workflow.compile(checkpointer=checkpointer)  # type: ignore[arg-type]
+
+
+# Module-level graph for tests (uses MemorySaver, not Redis)
+def _build_test_graph() -> Any:
+    """Build graph with MemorySaver checkpointer for testing."""
+    # Import agent implementations (deferred to avoid circular imports)
+    from api.agents.incident_agent import make_incident_agent
+    from api.agents.log_agent import log_agent
+    from api.agents.metrics_agent import metrics_agent
+    from api.agents.runbook_agent import runbook_agent
+    from api.agents.synthesis_agent import synthesis_agent
+
+    # Create mock session for tests
+    mock_session = AsyncMock(spec=AsyncSession)
+    incident_agent_node = make_incident_agent(mock_session)
+
+    # Build the workflow
+    workflow = StateGraph(GraphState)
+
+    # Add nodes
+    workflow.add_node("supervisor", supervisor)
+    workflow.add_node("metrics_agent", metrics_agent)
+    workflow.add_node("log_agent", log_agent)
+    workflow.add_node("runbook_agent", runbook_agent)
+    workflow.add_node("synthesis_agent", synthesis_agent)
+    workflow.add_node("incident_agent", incident_agent_node)  # type: ignore[arg-type]
+
+    # Add edges
+    workflow.add_edge(START, "supervisor")
+    workflow.add_conditional_edges(
+        "supervisor",
+        route_supervisor,
+        {
+            "metrics_agent": "metrics_agent",
+            "log_agent": "log_agent",
+            "runbook_agent": "runbook_agent",
+            "synthesis_agent": "synthesis_agent",
+            "incident_agent": "incident_agent",
+            END: END,
+        },
+    )
+
+    # All agents return to supervisor for coordination
+    workflow.add_edge("metrics_agent", "supervisor")
+    workflow.add_edge("log_agent", "supervisor")
+    workflow.add_edge("runbook_agent", "supervisor")
+    workflow.add_edge("synthesis_agent", "supervisor")
+    workflow.add_edge("incident_agent", "supervisor")
+
+    # Compile with MemorySaver checkpointer
+    checkpointer = MemorySaver()
+    return workflow.compile(checkpointer=checkpointer)
+
+
+# Test graph instance (does not require Redis)
+graph = _build_test_graph()

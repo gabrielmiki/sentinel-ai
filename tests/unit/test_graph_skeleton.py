@@ -125,7 +125,7 @@ class TestRouteSupervisor:
             "runbook_hits": [{"title": "Runbook 1"}],
             "final_report": "Final report content",
             "error": None,
-            "messages": [HumanMessage(content="incident_agent stub called")],
+            "messages": [HumanMessage(content="IncidentAgent updated incident test-id with final report")],
         }
 
         assert route_supervisor(state) == "__end__"
@@ -145,7 +145,7 @@ class TestGraphStructure:
         """Verify graph routes to metrics_agent on first execution."""
         initial_state: GraphState = {
             "incident_id": "test-incident",
-            "trigger": "High CPU usage alert",
+            "trigger": "High CPU usage alert for service: backend",
             "metrics_data": {},
             "log_data": [],
             "runbook_hits": [],
@@ -154,13 +154,14 @@ class TestGraphStructure:
             "messages": [],
         }
 
-        result = await graph.ainvoke(initial_state)  # type: ignore[arg-type]
+        config = {"configurable": {"thread_id": "test-thread-1"}}
+        result = await graph.ainvoke(initial_state, config)  # type: ignore[arg-type]
 
         # Should have supervisor and metrics_agent messages
         assert len(result["messages"]) >= 2
         message_contents = [msg.content for msg in result["messages"]]
-        assert "supervisor stub called" in message_contents
-        assert "metrics_agent stub called" in message_contents
+        assert "Supervisor coordinating agent execution" in message_contents
+        assert any("MetricsAgent" in content for content in message_contents)
 
     @pytest.mark.asyncio
     async def test_graph_accumulates_messages(self) -> None:
@@ -169,7 +170,7 @@ class TestGraphStructure:
 
         initial_state: GraphState = {
             "incident_id": "test-incident",
-            "trigger": "High CPU usage alert",
+            "trigger": "High CPU usage alert for service: backend",
             "metrics_data": {},
             "log_data": [],
             "runbook_hits": [],
@@ -178,7 +179,8 @@ class TestGraphStructure:
             "messages": [HumanMessage(content="Initial message")],
         }
 
-        result = await graph.ainvoke(initial_state)  # type: ignore[arg-type]
+        config = {"configurable": {"thread_id": "test-thread-2"}}
+        result = await graph.ainvoke(initial_state, config)  # type: ignore[arg-type]
 
         # Should preserve initial message and add new ones
         message_contents = [msg.content for msg in result["messages"]]
@@ -209,114 +211,11 @@ class TestGraphNodes:
 
         assert "messages" in result
         assert len(result["messages"]) == 1
-        assert result["messages"][0].content == "supervisor stub called"
+        assert result["messages"][0].content == "Supervisor coordinating agent execution"
 
-    @pytest.mark.asyncio
-    async def test_metrics_agent_stub_returns_message(self) -> None:
-        """Verify metrics_agent stub returns expected message."""
-        from api.agents.graph import metrics_agent
-
-        state: GraphState = {
-            "incident_id": "test-id",
-            "trigger": "Test alert",
-            "metrics_data": {},
-            "log_data": [],
-            "runbook_hits": [],
-            "final_report": "",
-            "error": None,
-            "messages": [],
-        }
-
-        result = await metrics_agent(state)
-
-        assert "messages" in result
-        assert len(result["messages"]) == 1
-        assert result["messages"][0].content == "metrics_agent stub called"
-
-    @pytest.mark.asyncio
-    async def test_log_agent_stub_returns_message(self) -> None:
-        """Verify log_agent stub returns expected message."""
-        from api.agents.graph import log_agent
-
-        state: GraphState = {
-            "incident_id": "test-id",
-            "trigger": "Test alert",
-            "metrics_data": {},
-            "log_data": [],
-            "runbook_hits": [],
-            "final_report": "",
-            "error": None,
-            "messages": [],
-        }
-
-        result = await log_agent(state)
-
-        assert "messages" in result
-        assert len(result["messages"]) == 1
-        assert result["messages"][0].content == "log_agent stub called"
-
-    @pytest.mark.asyncio
-    async def test_runbook_agent_stub_returns_message(self) -> None:
-        """Verify runbook_agent stub returns expected message."""
-        from api.agents.graph import runbook_agent
-
-        state: GraphState = {
-            "incident_id": "test-id",
-            "trigger": "Test alert",
-            "metrics_data": {},
-            "log_data": [],
-            "runbook_hits": [],
-            "final_report": "",
-            "error": None,
-            "messages": [],
-        }
-
-        result = await runbook_agent(state)
-
-        assert "messages" in result
-        assert len(result["messages"]) == 1
-        assert result["messages"][0].content == "runbook_agent stub called"
-
-    @pytest.mark.asyncio
-    async def test_synthesis_agent_stub_returns_message(self) -> None:
-        """Verify synthesis_agent stub returns expected message."""
-        from api.agents.graph import synthesis_agent
-
-        state: GraphState = {
-            "incident_id": "test-id",
-            "trigger": "Test alert",
-            "metrics_data": {},
-            "log_data": [],
-            "runbook_hits": [],
-            "final_report": "",
-            "error": None,
-            "messages": [],
-        }
-
-        result = await synthesis_agent(state)
-
-        assert "messages" in result
-        assert len(result["messages"]) == 1
-        assert result["messages"][0].content == "synthesis_agent stub called"
-
-    @pytest.mark.asyncio
-    async def test_incident_agent_stub_returns_message(self) -> None:
-        """Verify incident_agent stub returns expected message."""
-        from api.agents.graph import incident_agent
-
-        state: GraphState = {
-            "incident_id": "test-id",
-            "trigger": "Test alert",
-            "metrics_data": {},
-            "log_data": [],
-            "runbook_hits": [],
-            "final_report": "",
-            "error": None,
-            "messages": [],
-        }
-
-        result = await incident_agent(state)
-
-        assert "messages" in result
-        assert len(result["messages"]) == 1
-        assert result["messages"][0].content == "incident_agent stub called"
+    # Note: Individual agent implementations are tested in their own test files:
+    # - test_metrics_agent.py
+    # - test_log_agent.py
+    # - test_runbook_agent.py
+    # - test_synthesis_agent.py
+    # - test_incident_agent.py
