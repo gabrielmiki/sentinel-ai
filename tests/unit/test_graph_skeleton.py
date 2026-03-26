@@ -125,7 +125,9 @@ class TestRouteSupervisor:
             "runbook_hits": [{"title": "Runbook 1"}],
             "final_report": "Final report content",
             "error": None,
-            "messages": [HumanMessage(content="IncidentAgent updated incident test-id with final report")],
+            "messages": [
+                HumanMessage(content="IncidentAgent updated incident test-id with final report")
+            ],
         }
 
         assert route_supervisor(state) == "__end__"
