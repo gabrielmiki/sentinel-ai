@@ -36,35 +36,35 @@ The `ecdsa` library is vulnerable to a Minerva timing attack on P-256 ECDSA sign
 
 ---
 
-### CVE-2026-4539 / GHSA-5239-wwwm-4pmq: pygments AdlLexer ReDoS
+## Resolved Vulnerabilities
 
-**Package:** `pygments` v2.19.2 (dev dependency)
-**Severity:** Not yet scored - ReDoS vulnerability
-**Status:** No patch available (upstream has not responded)
-**Date Accepted:** 2026-03-24
+This section documents vulnerabilities that have been resolved through package upgrades.
 
-#### Vulnerability Description
-The `pygments` library contains an inefficient regular expression in the AdlLexer (Archetype Definition Language lexer) that can lead to a Regular Expression Denial of Service (ReDoS) attack. The vulnerable code is in `pygments/lexers/archetype.py`.
+### 2026-04-06: Security Patch Batch
 
-#### Mitigation
-1. **Primary:** This is a dev-only dependency used for syntax highlighting in documentation and test reports
-2. **Attack Vector:** Requires local access and specific use of AdlLexer (rarely used language)
-3. **Production Impact:** Zero - pygments is not used in production runtime or Docker images
+**Resolved 4 vulnerabilities** via dependency upgrades:
 
-#### Risk Assessment
-- **Likelihood:** Very Low (requires local access + specific lexer + crafted input)
-- **Impact:** Low (DoS only affects development environment)
-- **Overall Risk:** Low (acceptable for dev dependency)
+1. **CVE-2026-34073** - `cryptography` 46.0.5 → 46.0.6
+   - Incomplete DNS name constraint enforcement on peer names
+   - Severity: Not yet scored
+   - GHSA: GHSA-m959-cc7f-wv43
 
-#### Monitoring Plan
-- Review quarterly for patched versions
-- Re-assess if pygments is added to production dependencies
-- Consider alternative syntax highlighting library if no fix by Q2 2026
+2. **CVE-2026-33936** - `ecdsa` 0.19.1 → 0.19.2
+   - Denial of Service via improper DER length validation in crafted private keys
+   - Severity: Not yet scored
+   - GHSA: GHSA-9f5j-8jwj-x28g
 
-#### References
-- CVE: https://nvd.nist.gov/vuln/detail/CVE-2026-4539
-- GitHub Advisory: GHSA-5239-wwwm-4pmq
-- OSV Entry: https://osv.dev/vulnerability/GHSA-5239-wwwm-4pmq
+3. **CVE-2026-34070** - `langchain-core` 1.2.17 → 1.2.26
+   - Path Traversal vulnerabilities in legacy `load_prompt` functions
+   - Severity: Not yet scored
+   - GHSA: GHSA-qh6h-p6c9-ff54
+
+4. **GHSA-5239-wwwm-4pmq** - `pygments` 2.19.2 → 2.20.0
+   - ReDoS vulnerability in AdlLexer (Archetype Definition Language lexer)
+   - Previously accepted 2026-03-24, now resolved
+   - CVE: CVE-2026-4539
+
+**Verification:** All vulnerabilities confirmed resolved via `pip-audit` on 2026-04-06.
 
 ---
 
