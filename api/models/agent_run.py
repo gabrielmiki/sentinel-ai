@@ -23,6 +23,7 @@ class AgentRun(Base):
     incident_id: Mapped[str | None] = mapped_column(
         ForeignKey("sentinel.incidents.id"), nullable=True
     )
+    thread_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False)
     input_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     output_data: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)

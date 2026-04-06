@@ -4,7 +4,6 @@ Agents execution router.
 Manages LangGraph agent runs: triggering, monitoring, streaming, and cancellation.
 """
 
-import asyncio
 import json
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -15,7 +14,6 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sse_starlette.sse import EventSourceResponse
 
 from api.database import get_db
 
@@ -91,94 +89,125 @@ async def get_run_or_404(run_id: str, db: AsyncSession) -> Any:
     return run
 
 
-async def stream_agent_events(
-    run_id: str, db: AsyncSession
-) -> AsyncGenerator[dict[str, Any], None]:
+def _format_sse(event_type: str, data: dict[str, Any]) -> str:
+    """Format data as Server-Sent Event string."""
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+
+async def stream_agent_events(run_id: str, db: AsyncSession) -> AsyncGenerator[str, None]:
     """
     Stream agent execution events via Server-Sent Events.
 
-    Polls the agent_runs table for state changes and yields events.
+    Streams real-time LangGraph execution events from astream_events().
 
     Args:
         run_id: Agent run ID to stream
         db: Database session
 
     Yields:
-        SSE events (node_start, node_complete, final_report)
+        SSE-formatted event strings
     """
+    from api.agents.graph import GraphState, build_graph
     from api.models.agent_run import AgentRun
 
-    last_node: str | None = None
-    completed_nodes_count = 0
-
-    while True:
-        # Fetch current run state
+    try:
+        # Look up run to get incident_id and thread_id
         query = select(AgentRun).where(AgentRun.id == run_id)
         result = await db.execute(query)
         run = result.scalar_one_or_none()
 
         if not run:
-            yield {
-                "event": "error",
-                "data": {
+            yield _format_sse(
+                "error",
+                {
                     "event_type": "error",
                     "timestamp": datetime.now(UTC).isoformat(),
                     "error": "Run not found",
                 },
-            }
-            break
+            )
+            return
 
-        # Check if new node started
-        if run.current_node and run.current_node != last_node:
-            yield {
-                "event": "node_start",
-                "data": {
-                    "event_type": "node_start",
+        if not run.thread_id:
+            yield _format_sse(
+                "error",
+                {
+                    "event_type": "error",
                     "timestamp": datetime.now(UTC).isoformat(),
-                    "node_name": run.current_node,
+                    "error": "Run has no thread_id",
                 },
-            }
-            last_node = run.current_node
+            )
+            return
 
-        # Check if nodes completed
-        if run.completed_nodes and len(run.completed_nodes) > completed_nodes_count:
-            new_nodes = run.completed_nodes[completed_nodes_count:]
-            for node in new_nodes:
-                yield {
-                    "event": "node_complete",
-                    "data": {
-                        "event_type": "node_complete",
-                        "timestamp": datetime.now(UTC).isoformat(),
-                        "node_name": node,
-                        "node_output": run.output_data or {},
-                    },
-                }
-            completed_nodes_count = len(run.completed_nodes)
-
-        # Check if run completed
-        if run.status in ["completed", "failed", "cancelled"]:
-            if run.status == "completed" and run.output_data:
-                yield {
-                    "event": "final_report",
-                    "data": {
-                        "event_type": "final_report",
-                        "timestamp": datetime.now(UTC).isoformat(),
-                        "final_report": run.output_data.get("final_report", ""),
-                    },
-                }
-
-            yield {
-                "event": "done",
-                "data": {
-                    "event_type": "done",
+        # Build initial state from run's input_data
+        if not run.input_data:
+            yield _format_sse(
+                "error",
+                {
+                    "event_type": "error",
                     "timestamp": datetime.now(UTC).isoformat(),
-                    "status": run.status,
+                    "error": "Run has no input_data",
                 },
-            }
-            break
+            )
+            return
 
-        # Poll interval
-        await asyncio.sleep(0.5)
+        initial_state: GraphState = {
+            "incident_id": run.input_data.get("incident_id", ""),
+            "trigger": run.input_data.get("trigger", ""),
+            "metrics_data": run.input_data.get("metrics_data", {}),
+            "log_data": run.input_data.get("log_data", []),
+            "runbook_hits": run.input_data.get("runbook_hits", []),
+            "final_report": run.input_data.get("final_report", ""),
+            "error": run.input_data.get("error"),
+            "messages": run.input_data.get("messages", []),
+        }
+
+        # Build graph with database session
+        graph = await build_graph(db)
+
+        # Stream events from LangGraph
+        config = {"configurable": {"thread_id": run.thread_id}}
+
+        async for event in graph.astream_events(initial_state, config, version="v2"):
+            event_type = event.get("event")
+
+            # Filter to relevant event types
+            if event_type in ["on_chain_start", "on_chain_end", "on_tool_start", "on_tool_end"]:
+                # Build filtered event payload
+                filtered_event = {"event": event_type, "name": event.get("name", ""), "data": {}}
+
+                # Include input or output data
+                event_data = event.get("data", {})
+                if "input" in event_data:
+                    filtered_event["data"]["input"] = event_data["input"]
+                if "output" in event_data:
+                    filtered_event["data"]["output"] = event_data["output"]
+
+                yield _format_sse(event_type, filtered_event)
+
+            # Check for graph completion (on_chain_end for the full graph)
+            if event_type == "on_chain_end" and event.get("name") == "LangGraph":
+                output = event.get("data", {}).get("output", {})
+                final_report = output.get("final_report", "")
+
+                if final_report:
+                    yield _format_sse(
+                        "complete",
+                        {
+                            "event_type": "complete",
+                            "timestamp": datetime.now(UTC).isoformat(),
+                            "final_report": final_report,
+                        },
+                    )
+
+    except Exception as e:
+        yield _format_sse(
+            "error",
+            {
+                "event_type": "error",
+                "timestamp": datetime.now(UTC).isoformat(),
+                "error": str(e),
+            },
+        )
 
 
 # ==================== Endpoints ====================
@@ -221,22 +250,28 @@ async def trigger_agent_run(
 
     # Create agent run
     run_id = str(uuid4())
+    thread_id = f"incident-{incident_id}-run-{run_id}"
+
     create_query = text(
         """
         INSERT INTO sentinel.agent_runs
-        (id, incident_id, status, input_data, current_node, completed_nodes)
-        VALUES (:id, :incident_id, 'pending', :input_data, NULL, '[]'::jsonb)
-        RETURNING id, incident_id, status, current_node, completed_nodes,
+        (id, incident_id, thread_id, status, input_data, current_node, completed_nodes)
+        VALUES (:id, :incident_id, :thread_id, 'pending', :input_data, NULL, '[]'::jsonb)
+        RETURNING id, incident_id, thread_id, status, current_node, completed_nodes,
                   input_data, output_data, error_message,
                   started_at, completed_at, duration_ms
         """
     )
 
-    input_data = {
+    input_data: dict[str, Any] = {
         "incident_id": incident_id,
-        "incident_title": incident.title,
-        "incident_description": incident.description,
-        "severity": incident.severity,
+        "trigger": f"{incident.title}: {incident.description or ''}",
+        "metrics_data": {},
+        "log_data": [],
+        "runbook_hits": [],
+        "final_report": "",
+        "error": None,
+        "messages": [],
     }
 
     result = await db.execute(
@@ -244,6 +279,7 @@ async def trigger_agent_run(
         {
             "id": run_id,
             "incident_id": incident_id,
+            "thread_id": thread_id,
             "input_data": json.dumps(input_data),
         },
     )
@@ -292,32 +328,42 @@ async def get_agent_run(
 @router.get(
     "/runs/{run_id}/stream",
     summary="Stream agent execution",
-    response_class=EventSourceResponse,
 )
 async def stream_agent_run(
     run_id: str,
     db: AsyncSession = Depends(get_db),
-) -> EventSourceResponse:
+) -> Any:
     """
     Stream agent execution events via Server-Sent Events.
 
-    Yields real-time events as the graph progresses:
-    - node_start: When a new node begins execution
-    - node_complete: When a node finishes with output
-    - final_report: When the entire graph completes
-    - done: Stream termination
+    Yields real-time LangGraph events as the graph executes:
+    - on_chain_start: When a node/chain begins execution
+    - on_chain_end: When a node/chain completes
+    - on_tool_start: When a tool is invoked
+    - on_tool_end: When a tool completes
+    - complete: When the entire graph finishes with final report
+    - error: On any exception
 
     Args:
         run_id: Agent run ID
         db: Database session
 
     Returns:
-        SSE event stream
+        SSE event stream with Cache-Control and X-Accel-Buffering headers
     """
+    from fastapi.responses import StreamingResponse
+
     # Verify run exists first
     await get_run_or_404(run_id, db)
 
-    return EventSourceResponse(stream_agent_events(run_id, db))
+    return StreamingResponse(
+        stream_agent_events(run_id, db),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post(
