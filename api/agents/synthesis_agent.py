@@ -7,12 +7,14 @@ a structured incident report.
 
 import json
 import os
+import time
 from typing import Any
 
+from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_openai import ChatOpenAI
 
 from api.agents.graph import GraphState
+from api.metrics import agent_duration_seconds, agent_invocations_total
 
 SYSTEM_PROMPT = """You are an SRE incident analyst. Given metrics, logs, and runbook context, produce a structured incident report as valid JSON with exactly these keys: summary (str, max 2 sentences), root_cause_hypothesis (str), affected_components (list[str]), recommended_actions (list[str], max 5), severity_assessment (one of: low/medium/high/critical). Respond with JSON only, no markdown fences."""
 
@@ -125,84 +127,105 @@ async def synthesis_agent(state: GraphState) -> dict[str, Any]:
     Returns:
         Updated state with final_report and messages
     """
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        # Fallback report when API key not configured
-        fallback_report = {
-            "summary": "Analysis failed: OpenAI API key not configured",
-            "root_cause_hypothesis": "Configuration error",
-            "affected_components": ["unknown"],
-            "recommended_actions": ["Configure OPENAI_API_KEY environment variable"],
-            "severity_assessment": "medium",
-        }
-        return {
-            "final_report": json.dumps(fallback_report),
-            "messages": [
-                AIMessage(content="SynthesisAgent generated fallback report (no API key)")
-            ],
-        }
-
-    # Initialize LLM
-    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-
-    # Build messages
-    user_message = _build_user_message(state)
-    messages = [
-        SystemMessage(content=SYSTEM_PROMPT),
-        HumanMessage(content=user_message),
-    ]
-
+    start_time = time.monotonic()
     try:
-        # First attempt
-        response = await llm.ainvoke(messages)
-        content = response.content if isinstance(response.content, str) else str(response.content)
-        parsed_report = json.loads(content)
-
-        return {
-            "final_report": json.dumps(parsed_report),
-            "messages": [AIMessage(content="SynthesisAgent generated incident report")],
-        }
-
-    except json.JSONDecodeError:
-        # Retry with correction prompt
-        try:
-            correction_message = HumanMessage(
-                content="Your previous response was not valid JSON. Please respond with ONLY valid JSON, no markdown fences or additional text."
-            )
-            messages.append(response)
-            messages.append(correction_message)
-
-            retry_response = await llm.ainvoke(messages)
-            retry_content = (
-                retry_response.content
-                if isinstance(retry_response.content, str)
-                else str(retry_response.content)
-            )
-            parsed_report = json.loads(retry_content)
-
-            return {
-                "final_report": json.dumps(parsed_report),
-                "messages": [AIMessage(content="SynthesisAgent generated incident report (retry)")],
-            }
-
-        except json.JSONDecodeError:
-            # Fallback report with raw response
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            # Fallback report when API key not configured
             fallback_report = {
-                "summary": "Analysis failed",
-                "root_cause_hypothesis": "LLM parsing error",
+                "summary": "Analysis failed: Anthropic API key not configured",
+                "root_cause_hypothesis": "Configuration error",
                 "affected_components": ["unknown"],
-                "recommended_actions": [f"Raw LLM response: {retry_response.content[:200]}"],
+                "recommended_actions": ["Configure ANTHROPIC_API_KEY environment variable"],
                 "severity_assessment": "medium",
             }
-
-            return {
+            result = {
                 "final_report": json.dumps(fallback_report),
+                "attempted_agents": ["synthesis_agent"],
                 "messages": [
-                    AIMessage(content="SynthesisAgent generated fallback report (parsing failed)")
+                    AIMessage(content="SynthesisAgent generated fallback report (no API key)")
                 ],
             }
+            agent_invocations_total.labels(agent_name="synthesis_agent", status="success").inc()
+            return result
+
+        # Initialize LLM
+        llm = ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0)  # type: ignore[call-arg]
+
+        # Build messages
+        user_message = _build_user_message(state)
+        messages = [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=user_message),
+        ]
+
+        try:
+            # First attempt
+            response = await llm.ainvoke(messages)
+            content = (
+                response.content if isinstance(response.content, str) else str(response.content)
+            )
+            parsed_report = json.loads(content)
+
+            result = {
+                "final_report": json.dumps(parsed_report),
+                "attempted_agents": ["synthesis_agent"],
+                "messages": [AIMessage(content="SynthesisAgent generated incident report")],
+            }
+            agent_invocations_total.labels(agent_name="synthesis_agent", status="success").inc()
+            return result
+
+        except json.JSONDecodeError:
+            # Retry with correction prompt
+            try:
+                correction_message = HumanMessage(
+                    content="Your previous response was not valid JSON. Please respond with ONLY valid JSON, no markdown fences or additional text."
+                )
+                messages.append(response)
+                messages.append(correction_message)
+
+                retry_response = await llm.ainvoke(messages)
+                retry_content = (
+                    retry_response.content
+                    if isinstance(retry_response.content, str)
+                    else str(retry_response.content)
+                )
+                parsed_report = json.loads(retry_content)
+
+                result = {
+                    "final_report": json.dumps(parsed_report),
+                    "attempted_agents": ["synthesis_agent"],
+                    "messages": [
+                        AIMessage(content="SynthesisAgent generated incident report (retry)")
+                    ],
+                }
+                agent_invocations_total.labels(agent_name="synthesis_agent", status="success").inc()
+                return result
+
+            except json.JSONDecodeError:
+                # Fallback report with raw response
+                fallback_report = {
+                    "summary": "Analysis failed",
+                    "root_cause_hypothesis": "LLM parsing error",
+                    "affected_components": ["unknown"],
+                    "recommended_actions": [f"Raw LLM response: {retry_response.content[:200]}"],
+                    "severity_assessment": "medium",
+                }
+
+                result = {
+                    "final_report": json.dumps(fallback_report),
+                    "attempted_agents": ["synthesis_agent"],
+                    "messages": [
+                        AIMessage(
+                            content="SynthesisAgent generated fallback report (parsing failed)"
+                        )
+                    ],
+                }
+                agent_invocations_total.labels(agent_name="synthesis_agent", status="success").inc()
+                return result
 
     except Exception as e:
+        agent_invocations_total.labels(agent_name="synthesis_agent", status="error").inc()
         # Unexpected error fallback
         fallback_report = {
             "summary": "Analysis failed",
@@ -214,6 +237,12 @@ async def synthesis_agent(state: GraphState) -> dict[str, Any]:
 
         return {
             "final_report": json.dumps(fallback_report),
+            "attempted_agents": ["synthesis_agent"],
             "error": str(e),
             "messages": [AIMessage(content=f"SynthesisAgent encountered error: {str(e)}")],
         }
+
+    finally:
+        agent_duration_seconds.labels(agent_name="synthesis_agent").observe(
+            time.monotonic() - start_time
+        )

@@ -29,8 +29,8 @@ echo "$(generate_jwt_secret)" > "$SECRETS_DIR/jwt_secret_key.txt"
 
 # Create placeholder API key files (user must replace these)
 if [ ! -f "$SECRETS_DIR/openai_api_key.txt" ]; then
-    echo "sk-REPLACE_WITH_YOUR_OPENAI_API_KEY" > "$SECRETS_DIR/openai_api_key.txt"
-    echo "⚠️  OPENAI_API_KEY: Please replace placeholder in secrets/openai_api_key.txt"
+    echo "sk-REPLACE_WITH_YOUR_GOOGLE_API_KEY" > "$SECRETS_DIR/openai_api_key.txt"
+    echo "⚠️  GOOGLE_API_KEY: Please replace placeholder in secrets/openai_api_key.txt"
 fi
 
 if [ ! -f "$SECRETS_DIR/anthropic_api_key.txt" ]; then

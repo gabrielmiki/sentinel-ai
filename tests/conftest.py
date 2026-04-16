@@ -234,7 +234,7 @@ async def client(
     - Automatic database session overrides (uses test db_session and vectordb_session)
     - Guaranteed cleanup via dependency_overrides.clear()
     - Mocked Redis for health checks
-    - Mocked OpenAI embeddings for runbooks
+    - Mocked Google AI embeddings for runbooks
 
     Use for testing async endpoints, SSE streams, database operations, and WebSockets.
 
@@ -274,10 +274,10 @@ async def client(
 
     monkeypatch.setattr(aioredis, "from_url", mock_from_url)
 
-    # Mock OpenAI embeddings for runbooks (avoid API calls in tests)
+    # Mock Google AI embeddings for runbooks (avoid API calls in tests)
     async def mock_generate_embeddings(texts: list[str]) -> list[list[float]]:
-        """Return deterministic 1536-dimensional embeddings for testing."""
-        return [[0.1 + (i * 0.01)] * 1536 for i in range(len(texts))]
+        """Return deterministic 768-dimensional embeddings for testing."""
+        return [[0.1 + (i * 0.01)] * 768 for i in range(len(texts))]
 
     import api.routers.runbooks
 
@@ -416,9 +416,9 @@ def mock_prometheus_tool(mock_prometheus_client: Mock) -> Mock:
 
 
 @pytest.fixture
-def mock_openai_llm() -> AsyncMock:
+def mock_google_llm() -> AsyncMock:
     """
-    Mock OpenAI LLM for testing LangChain/LangGraph agents.
+    Mock Google AI LLM for testing LangChain/LangGraph agents.
 
     Returns pre-configured responses for common prompts.
     """
@@ -431,7 +431,7 @@ def mock_openai_llm() -> AsyncMock:
             "(>80%) on backend-1 at 14:30 UTC. This correlates with the "
             "increased error rate observed in the logs."
         ),
-        response_metadata={"model": "gpt-4", "usage": {"total_tokens": 125}},
+        response_metadata={"model": "gemini-2.0-flash-exp", "usage": {"total_tokens": 125}},
     )
 
     # Mock streaming response
@@ -468,15 +468,15 @@ def mock_anthropic_llm() -> AsyncMock:
 @pytest.fixture
 def mock_embeddings() -> AsyncMock:
     """
-    Mock OpenAI embeddings for testing RAG and vector search.
+    Mock Google AI embeddings for testing RAG and vector search.
 
     Returns deterministic embedding vectors for reproducible tests.
     """
     mock_embeddings = AsyncMock()
 
-    # Return consistent 1536-dimensional embeddings (OpenAI ada-002 format)
-    mock_embeddings.aembed_query.return_value = [0.1] * 1536
-    mock_embeddings.aembed_documents.return_value = [[0.1] * 1536, [0.2] * 1536]
+    # Return consistent 768-dimensional embeddings (Google text-embedding-004 format)
+    mock_embeddings.aembed_query.return_value = [0.1] * 768
+    mock_embeddings.aembed_documents.return_value = [[0.1] * 768, [0.2] * 768]
 
     return mock_embeddings
 

@@ -6,11 +6,13 @@ Queries Prometheus for service metrics related to the incident.
 
 import asyncio
 import re
+import time
 from typing import Any
 
 from langchain_core.messages import AIMessage
 
 from api.agents.graph import GraphState
+from api.metrics import agent_duration_seconds, agent_invocations_total
 from api.tools.prometheus import ToolExecutionError, _query_prometheus
 
 
@@ -46,41 +48,58 @@ async def metrics_agent(state: GraphState) -> dict[str, Any]:
     Returns:
         Updated state with metrics_data and messages
     """
-    service = extract_service_name(state["trigger"])
+    start_time = time.monotonic()
+    try:
+        service = extract_service_name(state["trigger"])
 
-    # Build PromQL queries for the service
-    queries = {
-        "request_rate": f'rate(http_requests_total{{service="{service}"}}[5m])',
-        "error_rate": f'rate(http_requests_total{{service="{service}",status=~"5.."}}[5m])',
-        "p99_latency": f'histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{{service="{service}"}}[5m]))',
-        "cpu_usage": f'rate(process_cpu_seconds_total{{service="{service}"}}[5m])',
-    }
+        # Build PromQL queries using available metrics from backend
+        # Note: Backend currently only exports basic process metrics
+        # TODO: Add HTTP request metrics via prometheus-fastapi-instrumentator
+        queries = {
+            "cpu_usage": 'rate(process_cpu_seconds_total{job="sentinel-backend"}[5m])',
+            "memory_usage": 'process_resident_memory_bytes{job="sentinel-backend"}',
+            "open_files": 'process_open_fds{job="sentinel-backend"}',
+            "gc_collections": 'rate(python_gc_collections_total{job="sentinel-backend"}[5m])',
+        }
 
-    # Execute queries concurrently
-    async def query_with_error_handling(name: str, promql: str) -> tuple[str, Any]:
-        """Execute a single query and return (name, result_or_error)."""
-        try:
-            result = await _query_prometheus(promql)
-            return (name, result.model_dump())
-        except ToolExecutionError as e:
-            return (name, {"error": str(e)})
+        # Execute queries concurrently
+        async def query_with_error_handling(name: str, promql: str) -> tuple[str, Any]:
+            """Execute a single query and return (name, result_or_error)."""
+            try:
+                result = await _query_prometheus(promql)
+                return (name, result.model_dump())
+            except ToolExecutionError as e:
+                return (name, {"error": str(e)})
 
-    tasks = [query_with_error_handling(name, promql) for name, promql in queries.items()]
-    results = await asyncio.gather(*tasks)
+        tasks = [query_with_error_handling(name, promql) for name, promql in queries.items()]
+        results = await asyncio.gather(*tasks)
 
-    # Convert results to dict
-    metrics_data = dict(results)
+        # Convert results to dict
+        metrics_data = dict(results)
 
-    # Count successful queries
-    # Success: has "status" key (from PrometheusResult.model_dump())
-    # Error: {"error": "message"} has no "status" key
-    success_count = sum(1 for _, result in results if "status" in result)
+        # Count successful queries
+        # Success: has "status" key (from PrometheusResult.model_dump())
+        # Error: {"error": "message"} has no "status" key
+        success_count = sum(1 for _, result in results if "status" in result)
 
-    return {
-        "metrics_data": metrics_data,
-        "messages": [
-            AIMessage(
-                content=f"MetricsAgent collected {success_count}/{len(queries)} metrics for service '{service}'"
-            )
-        ],
-    }
+        result = {
+            "metrics_data": metrics_data,
+            "attempted_agents": ["metrics_agent"],
+            "messages": [
+                AIMessage(
+                    content=f"MetricsAgent collected {success_count}/{len(queries)} metrics for service '{service}'"
+                )
+            ],
+        }
+
+        agent_invocations_total.labels(agent_name="metrics_agent", status="success").inc()
+        return result
+
+    except Exception:
+        agent_invocations_total.labels(agent_name="metrics_agent", status="error").inc()
+        raise
+
+    finally:
+        agent_duration_seconds.labels(agent_name="metrics_agent").observe(
+            time.monotonic() - start_time
+        )

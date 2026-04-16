@@ -146,13 +146,13 @@ class TestLLMFixtures:
     """Test LLM mock fixtures."""
 
     @pytest.mark.asyncio
-    async def test_openai_llm_mock(self, mock_openai_llm) -> None:  # type: ignore[no-untyped-def]
-        """Verify OpenAI mock returns expected response structure."""
-        response = await mock_openai_llm.ainvoke("Analyze this incident")
+    async def test_google_llm_mock(self, mock_google_llm) -> None:  # type: ignore[no-untyped-def]
+        """Verify Google AI mock returns expected response structure."""
+        response = await mock_google_llm.ainvoke("Analyze this incident")
 
         assert response.content is not None
         assert "CPU usage" in response.content
-        assert response.response_metadata["model"] == "gpt-4"
+        assert response.response_metadata["model"] == "gemini-2.0-flash-exp"
 
     @pytest.mark.asyncio
     async def test_anthropic_llm_mock(self, mock_anthropic_llm) -> None:  # type: ignore[no-untyped-def]
@@ -169,9 +169,9 @@ class TestLLMFixtures:
         query_embedding = await mock_embeddings.aembed_query("test query")
         doc_embeddings = await mock_embeddings.aembed_documents(["doc1", "doc2"])
 
-        assert len(query_embedding) == 1536  # OpenAI ada-002 dimensions
+        assert len(query_embedding) == 768  # Google text-embedding-004 dimensions
         assert len(doc_embeddings) == 2
-        assert all(len(emb) == 1536 for emb in doc_embeddings)
+        assert all(len(emb) == 768 for emb in doc_embeddings)
 
 
 class TestRedisFixtures:

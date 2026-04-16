@@ -12,7 +12,7 @@ This directory contains sensitive credentials used by Docker Swarm secrets.
 2. **Production**: Manually create secret files with your actual credentials:
    ```bash
    echo "your-actual-password" > secrets/db_password.txt
-   echo "your-api-key" > secrets/openai_api_key.txt
+   echo "your-api-key" > secrets/google_api_key.txt
    # ... etc
    ```
 
@@ -21,7 +21,7 @@ This directory contains sensitive credentials used by Docker Swarm secrets.
 - `db_password.txt` - PostgreSQL database password
 - `vectordb_password.txt` - Vector database (pgvector) password
 - `redis_password.txt` - Redis password
-- `openai_api_key.txt` - OpenAI API key
+- `google_api_key.txt` - Google AI API key
 - `anthropic_api_key.txt` - Anthropic API key
 - `jwt_secret_key.txt` - JWT signing secret
 - `grafana_admin_password.txt` - Grafana admin password

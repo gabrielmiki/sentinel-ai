@@ -21,7 +21,7 @@ dependencies = [
     "pydantic>=2.6.0",
     "pydantic-settings>=2.1.0",
     "langchain>=0.1.0",
-    "langchain-openai>=0.0.5",
+    "langchain-google-genai>=2.0.0",
     "langchain-anthropic>=0.1.0",
     "langgraph>=0.0.20",
     "prometheus-api-client>=0.5.3",
@@ -36,6 +36,7 @@ dependencies = [
     "pyjwt>=2.12.0",
     "tornado>=6.5.5",
     "langgraph-checkpoint-redis>=0.4.0",
+    "python-json-logger>=2.0.7",
 ]
 
 [project.optional-dependencies]

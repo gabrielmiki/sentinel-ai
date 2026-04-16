@@ -5,6 +5,7 @@ Manages LangGraph agent runs: triggering, monitoring, streaming, and cancellatio
 """
 
 import json
+import uuid
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
@@ -32,8 +33,8 @@ class AgentRunCreate(BaseModel):
 class AgentRunResponse(BaseModel):
     """Schema for agent run status."""
 
-    id: str
-    incident_id: str | None
+    id: uuid.UUID
+    incident_id: uuid.UUID | None
     status: str
     current_node: str | None
     completed_nodes: list[str] | None
@@ -60,7 +61,7 @@ class AgentStreamEvent(BaseModel):
 # ==================== Helper Functions ====================
 
 
-async def get_run_or_404(run_id: str, db: AsyncSession) -> Any:
+async def get_run_or_404(run_id: uuid.UUID, db: AsyncSession) -> Any:
     """
     Fetch agent run by ID or raise 404.
 
@@ -89,12 +90,33 @@ async def get_run_or_404(run_id: str, db: AsyncSession) -> Any:
     return run
 
 
+def _sanitize_for_json(obj: Any) -> Any:
+    """
+    Recursively sanitize objects to be JSON-serializable.
+
+    Converts or removes non-serializable objects like LangChain messages.
+    """
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+
+    if isinstance(obj, dict):
+        # Exclude 'messages' field which contains non-serializable LangChain objects
+        return {k: _sanitize_for_json(v) for k, v in obj.items() if k != "messages"}
+
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(item) for item in obj]
+
+    # For any other object type, convert to string representation
+    return str(obj)
+
+
 def _format_sse(event_type: str, data: dict[str, Any]) -> str:
     """Format data as Server-Sent Event string."""
-    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+    sanitized_data = _sanitize_for_json(data)
+    return f"event: {event_type}\ndata: {json.dumps(sanitized_data)}\n\n"
 
 
-async def stream_agent_events(run_id: str, db: AsyncSession) -> AsyncGenerator[str, None]:
+async def stream_agent_events(run_id: uuid.UUID, db: AsyncSession) -> AsyncGenerator[str, None]:
     """
     Stream agent execution events via Server-Sent Events.
 
@@ -157,6 +179,8 @@ async def stream_agent_events(run_id: str, db: AsyncSession) -> AsyncGenerator[s
             "log_data": run.input_data.get("log_data", []),
             "runbook_hits": run.input_data.get("runbook_hits", []),
             "final_report": run.input_data.get("final_report", ""),
+            "incident_updated": run.input_data.get("incident_updated", False),
+            "attempted_agents": run.input_data.get("attempted_agents", []),
             "error": run.input_data.get("error"),
             "messages": run.input_data.get("messages", []),
         }
@@ -220,7 +244,7 @@ async def stream_agent_events(run_id: str, db: AsyncSession) -> AsyncGenerator[s
     summary="Trigger agent run",
 )
 async def trigger_agent_run(
-    incident_id: str,
+    incident_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
@@ -264,12 +288,14 @@ async def trigger_agent_run(
     )
 
     input_data: dict[str, Any] = {
-        "incident_id": incident_id,
+        "incident_id": str(incident_id),
         "trigger": f"{incident.title}: {incident.description or ''}",
         "metrics_data": {},
         "log_data": [],
         "runbook_hits": [],
         "final_report": "",
+        "incident_updated": False,
+        "attempted_agents": [],
         "error": None,
         "messages": [],
     }
@@ -278,7 +304,7 @@ async def trigger_agent_run(
         create_query,
         {
             "id": run_id,
-            "incident_id": incident_id,
+            "incident_id": str(incident_id),
             "thread_id": thread_id,
             "input_data": json.dumps(input_data),
         },
@@ -306,7 +332,7 @@ async def trigger_agent_run(
     summary="Get agent run status",
 )
 async def get_agent_run(
-    run_id: str,
+    run_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
@@ -330,7 +356,7 @@ async def get_agent_run(
     summary="Stream agent execution",
 )
 async def stream_agent_run(
-    run_id: str,
+    run_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> Any:
     """
@@ -372,7 +398,7 @@ async def stream_agent_run(
     summary="Cancel agent run",
 )
 async def cancel_agent_run(
-    run_id: str,
+    run_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """

@@ -11,7 +11,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from api.agents.graph import cleanup_checkpointer, initialize_checkpointer
 from api.database import close_db_connections
+from api.metrics import (  # noqa: F401 - Import to register metrics with prometheus_client
+    active_incidents,
+    agent_duration_seconds,
+    agent_invocations_total,
+    resolution_time_seconds,
+)
 from api.routers import agents, health, incidents, runbooks
 
 
@@ -21,23 +28,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Application lifespan manager.
 
     Handles startup and shutdown tasks:
-    - Startup: Initialize Prometheus metrics instrumentation
-    - Shutdown: Close database connections gracefully
+    - Startup: Initialize Redis checkpointer
+    - Shutdown: Close database connections and cleanup checkpointer
     """
-    # Startup: Initialize Prometheus instrumentation
-    instrumentator = Instrumentator(
-        should_group_status_codes=True,
-        should_ignore_untemplated=True,
-        should_respect_env_var=True,
-        should_instrument_requests_inprogress=True,
-        excluded_handlers=["/health", "/health/ready", "/metrics"],
-        env_var_name="ENABLE_METRICS",
-        inprogress_name="http_requests_inprogress",
-        inprogress_labels=True,
-    )
-    instrumentator.instrument(app)
+    # Startup: Initialize Redis checkpointer for LangGraph
+    await initialize_checkpointer()
 
     yield
+
+    # Shutdown: Cleanup checkpointer
+    await cleanup_checkpointer()
 
     # Shutdown: Close database connections
     await close_db_connections()
@@ -55,6 +55,19 @@ app.include_router(health.router)
 app.include_router(incidents.router)
 app.include_router(agents.router)
 app.include_router(runbooks.router)
+
+# Initialize Prometheus instrumentation
+# Note: Must be after app creation and router registration
+Instrumentator(
+    should_group_status_codes=True,
+    should_ignore_untemplated=True,
+    should_respect_env_var=True,
+    should_instrument_requests_inprogress=True,
+    excluded_handlers=["/health", "/health/ready"],  # Don't exclude /metrics
+    env_var_name="ENABLE_METRICS",
+    inprogress_name="http_requests_inprogress",
+    inprogress_labels=True,
+).instrument(app).expose(app)  # Creates /metrics endpoint
 
 
 @app.get("/")

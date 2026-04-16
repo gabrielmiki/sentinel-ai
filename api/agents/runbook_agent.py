@@ -4,11 +4,13 @@ Runbook agent node for LangGraph.
 Performs semantic search on runbook vector database to find relevant documentation.
 """
 
+import time
 from typing import Any
 
 from langchain_core.messages import AIMessage
 
 from api.agents.graph import GraphState
+from api.metrics import agent_duration_seconds, agent_invocations_total
 from api.tools.runbooks import _search_runbooks
 
 
@@ -60,10 +62,11 @@ async def runbook_agent(state: GraphState) -> dict[str, Any]:
     Returns:
         Updated state with runbook_hits and messages
     """
-    # Build search query from context
-    search_query = _build_search_query(state)
-
+    start_time = time.monotonic()
     try:
+        # Build search query from context
+        search_query = _build_search_query(state)
+
         # Search runbooks
         documents = await _search_runbooks(search_query, k=3)
 
@@ -83,15 +86,26 @@ async def runbook_agent(state: GraphState) -> dict[str, Any]:
         else:
             message_content = "RunbookAgent found no relevant runbooks"
 
-        return {
+        result = {
             "runbook_hits": runbook_hits,
+            "attempted_agents": ["runbook_agent"],
             "messages": [AIMessage(content=message_content)],
         }
 
+        agent_invocations_total.labels(agent_name="runbook_agent", status="success").inc()
+        return result
+
     except Exception as e:
+        agent_invocations_total.labels(agent_name="runbook_agent", status="error").inc()
         # Empty results are not failures, but tool errors are
         return {
             "runbook_hits": [],
+            "attempted_agents": ["runbook_agent"],
             "error": str(e),
             "messages": [AIMessage(content=f"RunbookAgent search failed: {str(e)}")],
         }
+
+    finally:
+        agent_duration_seconds.labels(agent_name="runbook_agent").observe(
+            time.monotonic() - start_time
+        )

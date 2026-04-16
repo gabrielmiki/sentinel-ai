@@ -6,14 +6,15 @@ Handles incident lifecycle: creation, updates, listing, and Alertmanager webhook
 
 from datetime import datetime
 from typing import Any, Literal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import and_, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.database import get_db
+from api.metrics import active_incidents
 
 router = APIRouter(prefix="/api/v1/incidents", tags=["incidents"])
 
@@ -58,6 +59,16 @@ class IncidentResponse(BaseModel):
     resolved_at: datetime | None
 
     model_config = {"from_attributes": True}
+
+    @field_validator("id", "assignee", "created_by", mode="before")
+    @classmethod
+    def convert_uuid_to_str(cls, v: Any) -> str | None:
+        """Convert UUID objects to strings for JSON serialization."""
+        if v is None:
+            return None
+        if isinstance(v, UUID):
+            return str(v)
+        return v  # type: ignore[no-any-return]
 
 
 class PaginatedIncidentsResponse(BaseModel):
@@ -183,7 +194,18 @@ async def create_incident(
             detail="Failed to create incident",
         )
 
-    return row._asdict()
+    # Increment active incidents counter (status='open')
+    active_incidents.inc()
+
+    # Convert UUID to string for Pydantic validation
+    incident_dict = row._asdict()
+    incident_dict["id"] = str(incident_dict["id"])
+    if incident_dict.get("created_by"):
+        incident_dict["created_by"] = str(incident_dict["created_by"])
+    if incident_dict.get("assignee"):
+        incident_dict["assignee"] = str(incident_dict["assignee"])
+
+    return incident_dict
 
 
 @router.get(
@@ -358,6 +380,15 @@ async def update_incident(
             detail="No fields to update",
         )
 
+    # Fetch old status if status is being updated (needed for metrics)
+    old_status = None
+    if "status" in update_data:
+        query_old = select(Incident.status).where(
+            and_(Incident.id == incident_id, Incident.archived == False)  # noqa: E712
+        )
+        result_old = await db.execute(query_old)
+        old_status = result_old.scalar_one_or_none()
+
     query = (
         update(Incident)
         .where(and_(Incident.id == incident_id, Incident.archived == False))  # noqa: E712
@@ -375,6 +406,14 @@ async def update_incident(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Incident {incident_id} not found",
         )
+
+    # Decrement active incidents if status transitioned from open to investigated/resolved
+    if (
+        "status" in update_data
+        and old_status == "open"
+        and update_data["status"] in ("investigated", "resolved")
+    ):
+        active_incidents.dec()
 
     return incident
 
@@ -480,6 +519,9 @@ async def auto_trigger_from_alertmanager(
             },
         )
         await db.commit()
+
+        # Increment active incidents counter (status='open')
+        active_incidents.inc()
 
         created_incidents.append(incident_id)
 

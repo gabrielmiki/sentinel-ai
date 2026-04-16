@@ -8,7 +8,7 @@ import json
 import os
 from typing import Any
 
-from langchain_openai import OpenAIEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -25,7 +25,7 @@ class Document(BaseModel):
 
 async def generate_embeddings(texts: list[str]) -> list[list[float]]:
     """
-    Generate embeddings for text using OpenAI.
+    Generate embeddings for text using Google AI.
 
     Args:
         texts: List of text strings to embed
@@ -36,12 +36,12 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]]:
     Raises:
         ToolExecutionError: If embedding generation fails
     """
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        raise ToolExecutionError("OPENAI_API_KEY not configured")
+        raise ToolExecutionError("GOOGLE_API_KEY not configured")
 
     try:
-        embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
         return await embeddings.aembed_documents(texts)
     except Exception as e:
         raise ToolExecutionError(f"Failed to generate embeddings: {e}") from e
@@ -85,7 +85,7 @@ async def _search_runbooks(
                     c.meta,
                     r.title,
                     1 - (c.embedding <=> CAST(:query_vector AS vector)) AS similarity_score
-                FROM embeddings.runbook_chunks c
+                FROM embeddings.runbook_embeddings c
                 JOIN sentinel.runbooks r ON c.runbook_id = r.id
                 WHERE 1 - (c.embedding <=> CAST(:query_vector AS vector)) > 0.5
                 ORDER BY c.embedding <=> CAST(:query_vector AS vector)
@@ -103,7 +103,8 @@ async def _search_runbooks(
             # Convert to Document objects
             documents = []
             for row in rows:
-                meta = json.loads(row.meta) if row.meta else {}
+                # row.meta is already a dict (asyncpg auto-decodes JSONB)
+                meta = row.meta if row.meta else {}
                 meta["title"] = row.title
                 meta["runbook_id"] = row.runbook_id
                 meta["score"] = float(row.similarity_score)

@@ -11,10 +11,14 @@ from typing import Annotated, Any, TypedDict
 from unittest.mock import AsyncMock
 
 from langchain_core.messages import HumanMessage
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.redis.aio import AsyncRedisSaver
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Module-level checkpointer instance (initialized at startup)
+_checkpointer: BaseCheckpointSaver | None = None
 
 
 class GraphState(TypedDict):
@@ -26,6 +30,10 @@ class GraphState(TypedDict):
     log_data: list[str]  # Filled by LogAgent
     runbook_hits: list[dict[str, Any]]  # Filled by RunbookAgent
     final_report: str  # Filled by SynthesisAgent
+    incident_updated: bool  # Set to True by IncidentAgent when done (success or error)
+    attempted_agents: Annotated[
+        list[str], operator.add
+    ]  # Track which agents have run (prevents retry loops)
     error: str | None  # Set if any node fails
     messages: Annotated[list[Any], operator.add]  # Accumulates all agent messages
 
@@ -40,43 +48,81 @@ def route_supervisor(state: GraphState) -> str:
     Conditional routing function for supervisor node.
 
     Routes to:
-    - metrics_agent if metrics_data is empty
-    - log_agent if log_data is empty
-    - runbook_agent if runbook_hits is empty
-    - synthesis_agent if final_report is empty
-    - incident_agent if all data is populated
+    - metrics_agent if not yet attempted
+    - log_agent if not yet attempted
+    - runbook_agent if not yet attempted
+    - synthesis_agent if all data collection agents have run
+    - incident_agent if synthesis completed
     - END if incident_agent has completed
+
+    Note: Agents are only attempted once. If they fail, the graph continues
+    with whatever data was collected to produce a partial report.
     """
+    # Track which agents have been attempted (prevents infinite retry loops)
+    attempted = state.get("attempted_agents", [])
+
     # Check if all specialist data is populated
     has_metrics = bool(state.get("metrics_data"))
     has_logs = bool(state.get("log_data"))
     has_runbooks = bool(state.get("runbook_hits"))
     has_report = bool(state.get("final_report"))
 
-    # If all data collected and report generated, update incident
-    if has_metrics and has_logs and has_runbooks and has_report:
-        # Check if incident_agent already ran by looking at messages
-        messages = state.get("messages", [])
-        incident_agent_ran = any(
-            "IncidentAgent updated incident" in str(msg.content) for msg in messages
-        )
+    # Check if all data collection agents have been attempted
+    all_collectors_attempted = all(
+        agent in attempted for agent in ["metrics_agent", "log_agent", "runbook_agent"]
+    )
 
-        if incident_agent_ran:
-            return END
-        return "incident_agent"
+    # If synthesis completed and incident updated, we're done
+    if has_report and state.get("incident_updated"):
+        return END
 
-    # Route to next missing specialist agent
-    if not has_metrics:
+    # If all collectors ran and synthesis completed, update incident
+    if all_collectors_attempted and has_report:
+        if "incident_agent" not in attempted:
+            return "incident_agent"
+        return END
+
+    # If all collectors ran, generate synthesis (even with partial data)
+    if all_collectors_attempted:
+        if "synthesis_agent" not in attempted:
+            return "synthesis_agent"
+        # Synthesis failed or produced empty report, still update incident
+        if "incident_agent" not in attempted:
+            return "incident_agent"
+        return END
+
+    # Route to next unattempted data collection agent
+    if "metrics_agent" not in attempted:
         return "metrics_agent"
-    if not has_logs:
+    if "log_agent" not in attempted:
         return "log_agent"
-    if not has_runbooks:
+    if "runbook_agent" not in attempted:
         return "runbook_agent"
-    if not has_report:
-        return "synthesis_agent"
 
-    # Fallback to END (shouldn't reach here)
+    # Fallback: all agents attempted but we shouldn't reach here
     return END
+
+
+async def initialize_checkpointer() -> None:
+    """
+    Initialize the checkpointer at application startup.
+
+    Currently uses MemorySaver (in-memory checkpointing).
+    TODO: Switch to AsyncRedisSaver when Redis Stack is available.
+    """
+    global _checkpointer
+
+    # Use MemorySaver for now (no Redis Stack required)
+    # Checkpoints won't persist across restarts, but functionality works
+    _checkpointer = MemorySaver()
+
+
+async def cleanup_checkpointer() -> None:
+    """Clean up the checkpointer at application shutdown."""
+    global _checkpointer
+
+    # MemorySaver doesn't require cleanup, just reset the reference
+    _checkpointer = None
 
 
 async def build_graph(session: AsyncSession) -> Any:
@@ -88,17 +134,23 @@ async def build_graph(session: AsyncSession) -> Any:
 
     Returns:
         Compiled graph with Redis checkpointer attached
+
+    Raises:
+        RuntimeError: If checkpointer not initialized (call initialize_checkpointer at startup)
     """
+    global _checkpointer
+
+    if _checkpointer is None:
+        raise RuntimeError(
+            "Checkpointer not initialized. Call initialize_checkpointer() at application startup."
+        )
+
     # Import agent implementations (deferred to avoid circular imports)
     from api.agents.incident_agent import make_incident_agent
     from api.agents.log_agent import log_agent
     from api.agents.metrics_agent import metrics_agent
     from api.agents.runbook_agent import runbook_agent
     from api.agents.synthesis_agent import synthesis_agent
-
-    # Initialize Redis checkpointer
-    redis_url = os.getenv("REDIS_URL", "redis://redis:6379/0")
-    checkpointer = AsyncRedisSaver.from_conn_string(redis_url)
 
     # Create incident_agent with injected session
     incident_agent_node = make_incident_agent(session)
@@ -136,8 +188,8 @@ async def build_graph(session: AsyncSession) -> Any:
     workflow.add_edge("synthesis_agent", "supervisor")
     workflow.add_edge("incident_agent", "supervisor")
 
-    # Compile with Redis checkpointer
-    return workflow.compile(checkpointer=checkpointer)  # type: ignore[arg-type]
+    # Compile with global Redis checkpointer
+    return workflow.compile(checkpointer=_checkpointer)  # type: ignore[arg-type]
 
 
 # Module-level graph for tests (uses MemorySaver, not Redis)

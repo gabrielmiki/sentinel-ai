@@ -107,7 +107,7 @@ def chunk_markdown(content: str, chunk_size: int = 1000, overlap: int = 200) -> 
 
 async def generate_embeddings(texts: list[str]) -> list[list[float]]:
     """
-    Generate embeddings using OpenAI API.
+    Generate embeddings using Google AI API.
 
     Args:
         texts: List of text strings to embed
@@ -117,17 +117,16 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]]:
     """
     import os
 
-    from langchain_openai import OpenAIEmbeddings
-    from pydantic import SecretStr
+    from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
-    api_key = os.getenv("OPENAI_API_KEY")
+    api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OPENAI_API_KEY not configured",
+            detail="GOOGLE_API_KEY not configured",
         )
 
-    embeddings_model = OpenAIEmbeddings(model="text-embedding-ada-002", api_key=SecretStr(api_key))
+    embeddings_model = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
     vectors = await embeddings_model.aembed_documents(texts)
 
     return vectors
@@ -144,18 +143,16 @@ async def generate_embeddings(texts: list[str]) -> list[list[float]]:
 )
 async def ingest_runbook(
     file: UploadFile = File(..., description="Markdown file"),
-    db: AsyncSession = Depends(get_db),
     vectordb: AsyncSession = Depends(get_vectordb),
 ) -> dict[str, Any]:
     """
     Ingest a markdown runbook.
 
-    Chunks the file, generates embeddings via OpenAI, and stores in pgvector.
+    Chunks the file, generates embeddings via Google AI, and stores in pgvector.
 
     Args:
         file: Markdown file upload
-        db: Application database session
-        vectordb: Vector database session
+        vectordb: Vector database session (stores both runbooks and embeddings)
 
     Returns:
         Runbook ID and chunk count
@@ -196,7 +193,7 @@ async def ingest_runbook(
         """
     )
 
-    await db.execute(
+    await vectordb.execute(
         create_query,
         {
             "id": runbook_id,
@@ -205,7 +202,7 @@ async def ingest_runbook(
             "filename": file.filename,
         },
     )
-    await db.commit()
+    # Note: Don't commit yet - let dependency handle transaction
 
     # Chunk the content
     chunks = chunk_markdown(text_content, chunk_size=1000, overlap=200)
@@ -215,8 +212,7 @@ async def ingest_runbook(
         vectors = await generate_embeddings(chunks)
     except Exception as e:
         # Rollback runbook creation if embedding fails
-        await db.execute(text("DELETE FROM sentinel.runbooks WHERE id = :id"), {"id": runbook_id})
-        await db.commit()
+        await vectordb.rollback()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate embeddings: {e}",
@@ -245,14 +241,13 @@ async def ingest_runbook(
             },
         )
 
-    await vectordb.commit()
-
     # Update chunk count
-    await db.execute(
+    await vectordb.execute(
         text("UPDATE sentinel.runbooks SET chunk_count = :count WHERE id = :id"),
         {"count": len(chunks), "id": runbook_id},
     )
-    await db.commit()
+
+    # Note: All changes committed together by dependency's auto-commit
 
     return {
         "runbook_id": runbook_id,
@@ -267,13 +262,13 @@ async def ingest_runbook(
     summary="List runbooks",
 )
 async def list_runbooks(
-    db: AsyncSession = Depends(get_db),
+    vectordb: AsyncSession = Depends(get_vectordb),
 ) -> Any:
     """
     List all indexed runbooks with metadata.
 
     Args:
-        db: Database session
+        vectordb: Vector database session (stores runbooks table)
 
     Returns:
         List of runbooks
@@ -281,7 +276,7 @@ async def list_runbooks(
     from api.models.runbook import Runbook
 
     query = select(Runbook).order_by(Runbook.created_at.desc())
-    result = await db.execute(query)
+    result = await vectordb.execute(query)
     runbooks = result.scalars().all()
 
     return runbooks
@@ -294,7 +289,6 @@ async def list_runbooks(
 )
 async def delete_runbook(
     runbook_id: str,
-    db: AsyncSession = Depends(get_db),
     vectordb: AsyncSession = Depends(get_vectordb),
 ) -> None:
     """
@@ -302,15 +296,14 @@ async def delete_runbook(
 
     Args:
         runbook_id: Runbook ID
-        db: Application database
-        vectordb: Vector database
+        vectordb: Vector database session (stores both runbooks and embeddings)
     """
     from api.models.runbook import Runbook
     from api.models.vector import RunbookEmbedding
 
     # Verify runbook exists
     query = select(Runbook).where(Runbook.id == runbook_id)
-    result = await db.execute(query)
+    result = await vectordb.execute(query)
     runbook = result.scalar_one_or_none()
 
     if not runbook:
@@ -322,12 +315,12 @@ async def delete_runbook(
     # Delete embeddings from vectordb
     delete_embeddings = delete(RunbookEmbedding).where(RunbookEmbedding.runbook_id == runbook_id)
     await vectordb.execute(delete_embeddings)
-    await vectordb.commit()
 
     # Delete runbook
-    delete_runbook = delete(Runbook).where(Runbook.id == runbook_id)
-    await db.execute(delete_runbook)
-    await db.commit()
+    delete_runbook_query = delete(Runbook).where(Runbook.id == runbook_id)
+    await vectordb.execute(delete_runbook_query)
+
+    # Note: Changes committed by dependency's auto-commit
 
 
 @router.post(
@@ -389,7 +382,7 @@ async def search_runbooks(
 
     results = [
         {
-            "runbook_id": row[0],
+            "runbook_id": str(row[0]),  # Convert UUID to string
             "content": row[1],
             "metadata": row[2],
             "similarity_score": float(row[3]),

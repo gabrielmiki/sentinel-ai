@@ -10,7 +10,6 @@ Provides:
 from typing import Any
 
 from fastapi import APIRouter, Depends, Response, status
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -209,12 +208,10 @@ async def metrics() -> Response:
     Prometheus metrics endpoint.
 
     Exposes application metrics in Prometheus exposition format.
-    Includes default metrics (requests, latency, in-progress) plus custom metrics.
-
-    Note: This endpoint is auto-instrumented via prometheus-fastapi-instrumentator
-    in the main app startup. This handler just returns the latest metrics snapshot.
 
     Returns:
         Prometheus-formatted metrics text
     """
+    from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)

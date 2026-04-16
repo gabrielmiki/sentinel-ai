@@ -177,8 +177,8 @@ class TestSynthesisAgent:
         mock_response.content = json.dumps(mock_report)
 
         with (
-            patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}),
-            patch("api.agents.synthesis_agent.ChatOpenAI") as mock_llm_class,
+            patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"}),
+            patch("api.agents.synthesis_agent.ChatGoogleGenerativeAI") as mock_llm_class,
         ):
             mock_llm = AsyncMock()
             mock_llm.ainvoke.return_value = mock_response
@@ -221,8 +221,8 @@ class TestSynthesisAgent:
         mock_response2.content = json.dumps(valid_report)
 
         with (
-            patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}),
-            patch("api.agents.synthesis_agent.ChatOpenAI") as mock_llm_class,
+            patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"}),
+            patch("api.agents.synthesis_agent.ChatGoogleGenerativeAI") as mock_llm_class,
         ):
             mock_llm = AsyncMock()
             mock_llm.ainvoke.side_effect = [mock_response1, mock_response2]
@@ -258,8 +258,8 @@ class TestSynthesisAgent:
         mock_response2.content = "Still not JSON"
 
         with (
-            patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}),
-            patch("api.agents.synthesis_agent.ChatOpenAI") as mock_llm_class,
+            patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"}),
+            patch("api.agents.synthesis_agent.ChatGoogleGenerativeAI") as mock_llm_class,
         ):
             mock_llm = AsyncMock()
             mock_llm.ainvoke.side_effect = [mock_response1, mock_response2]
@@ -312,8 +312,8 @@ class TestSynthesisAgent:
         }
 
         with (
-            patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}),
-            patch("api.agents.synthesis_agent.ChatOpenAI") as mock_llm_class,
+            patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"}),
+            patch("api.agents.synthesis_agent.ChatGoogleGenerativeAI") as mock_llm_class,
         ):
             mock_llm = AsyncMock()
             mock_llm.ainvoke.side_effect = Exception("Network error")
@@ -353,8 +353,8 @@ class TestSynthesisAgent:
         )
 
         with (
-            patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}),
-            patch("api.agents.synthesis_agent.ChatOpenAI") as mock_llm_class,
+            patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key"}),
+            patch("api.agents.synthesis_agent.ChatGoogleGenerativeAI") as mock_llm_class,
         ):
             mock_llm = AsyncMock()
             mock_llm.ainvoke.return_value = mock_response
